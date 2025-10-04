@@ -1,0 +1,18 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v1.1.0
+_src_path: https://github.com/napari/napari-plugin-template
+display_name: Plate Navigator
+email: harri.jaalinoja@helsinki.fi
+full_name: Harri Jäälinoja
+github_repository_url: https://github.com/UH-LMU/napari-plate-navigator
+github_username_or_organization: UH-LMU
+include_reader_plugin: true
+include_sample_data_plugin: true
+include_widget_plugin: true
+include_writer_plugin: true
+install_dependabot: true
+install_precommit: true
+license: MIT
+module_name: napari_plate_navigator
+plugin_name: napari-plate-navigator
+short_description: A Napari plugin for browsing well plate data.
