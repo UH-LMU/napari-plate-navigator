@@ -14,10 +14,10 @@ from ._base import (
     WELL,
     Plate,
     StateManager,
+    build_plate_from_df,
     create_file_list,
     get_mount_path,
     get_stacks_and_projections,
-    load_dask_array,
 )
 
 # Test settings
@@ -165,8 +165,7 @@ def make_qwidget() -> NavigationWidget:
         if not stacks.empty:
             t_start = time.time()
             plate = Plate()
-            grouped = stacks.groupby(by=[WELL, SITE]).agg(list)
-            load_dask_array(grouped, plate, iol="image", name="image")
+            build_plate_from_df(stacks, plate, iol="image", name="image")
             print(f"Loaded images in {time.time() - t_start:.2f}s")
             print(f"plate.nwells after load: {plate.nwells()}")
 
@@ -226,9 +225,10 @@ def make_qwidget() -> NavigationWidget:
         # Handle missing labels if needed (using the nonlocal df_images)
         # df_labels = handle_missing_labels(df_images, df_labels, file_type)  # Uncomment when implemented
 
-        grouped = df_labels.groupby(by=[WELL, SITE]).agg(list)
         t_start = time.time()
-        load_dask_array(grouped, state.plate, iol="label", name=label_name)
+        build_plate_from_df(
+            df_labels, state.plate, iol="label", name=label_name
+        )
         print(f"Loaded labels '{label_name}' in {time.time() - t_start:.2f}s")
 
         # Refresh the current view after loading new labels

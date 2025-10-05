@@ -201,12 +201,14 @@ def get_stacks_and_projections(
     return stacks, projs
 
 
-def load_dask_array(
-    grouped_df: pd.DataFrame,
+def build_plate_from_df(
+    stacks_df: pd.DataFrame,
     plate: Plate,
     iol: str = "image",
     name: str = "image_name",
 ):
+    grouped_df = stacks_df.groupby(by=[WELL, SITE]).agg(list)
+
     for well, well_group in grouped_df.groupby(WELL):
         for site, site_group in tqdm(
             well_group.groupby(SITE), desc=f"Loading well {well}"
@@ -299,5 +301,5 @@ __all__ = [
     "Plate",
     "StateManager",
     "create_file_list",
-    "load_dask_array",
+    "build_plate_from_df",
 ]  # For easy imports
