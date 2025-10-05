@@ -249,5 +249,55 @@ def handle_missing_labels(
     return df_labels
 
 
+class StateManager:
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self.plate: Plate | None = None
+        self.df_images = pd.DataFrame()
+        self.channel_vis: dict[str, bool] = (
+            {}
+        )  # e.g., {'Ch1': True, 'Ch2': False}
+        self.label_vis: dict[str, bool] = {}  # e.g., {'nuclei': True}
+        self._initialized = True
+
+    def get_instance() -> "StateManager":
+        return StateManager()
+
+    def set_layer_visibility(
+        self, layer_name: str, visible: bool, is_label: bool = False
+    ):
+        """Update visibility in state (call from layer events)."""
+        vis_dict = self.label_vis if is_label else self.channel_vis
+        vis_dict[layer_name] = visible
+
+    def get_layer_visibility(
+        self, layer_name: str, is_label: bool = False
+    ) -> bool:
+        """Get visibility from state (default True if unset)."""
+        vis_dict = self.label_vis if is_label else self.channel_vis
+        return vis_dict.get(layer_name, True)
+
+    def clear_state(self):
+        """Reset on new plate load."""
+        self.plate = None
+        self.df_images = pd.DataFrame()
+        self.channel_vis.clear()
+        self.label_vis.clear()
+
+
 # Optional: Expose key bits for widget
-__all__ = ["Plate", "create_file_list", "load_dask_array"]  # For easy imports
+__all__ = [
+    "Plate",
+    "StateManager",
+    "create_file_list",
+    "load_dask_array",
+]  # For easy imports

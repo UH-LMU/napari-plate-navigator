@@ -3,7 +3,6 @@ import time
 from pathlib import Path
 
 import napari  # Import for proper Viewer annotation
-import pandas as pd
 from magicgui import magicgui
 from qtpy.QtCore import QTimer
 from qtpy.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
@@ -13,6 +12,7 @@ from ._base import (
     SITE,
     WELL,
     Plate,
+    StateManager,
     create_file_list,
     get_mount_path,
     get_stacks_and_projections,
@@ -31,13 +31,10 @@ else:
 
 
 class NavigationWidget(QWidget):
-    def __init__(
-        self, viewer: napari.Viewer, plate: Plate, df_images: pd.DataFrame
-    ):
+    def __init__(self, viewer: napari.Viewer, state: StateManager):
         super().__init__()
         self.viewer = viewer
-        self.plate = plate  # Store reference to plate
-        self.df_images = df_images  # Store if needed for labels
+        self.state = state
 
         layout = QVBoxLayout()
         self.well_label = QLabel("Well")
@@ -73,19 +70,46 @@ class NavigationWidget(QWidget):
             ###
             ## Now plate should be populated via closure
             ###
-            print(f"plate.nwells before clear: {self.plate.nwells()}")
+            print(f"plate.nwells before clear: {self.state.plate.nwells()}")
             self.viewer.layers.clear()
-            site_obj = self.plate.get_well_site(well, site)
+            site_obj = self.state.plate.get_well_site(well, site)
             site_obj.debug()
-            self.plate.debug()
+            self.state.plate.debug()
+
+            # Add images, then restore visibility
             for _img_name, img in site_obj.images.items():
                 # Generate generic channel names based on number of channels (assuming channel dim at index -3)
                 num_channels = img.shape[-3]
                 channel_names = [f"Ch{i+1}" for i in range(num_channels)]
-                self.viewer.add_image(img, channel_axis=-3, name=channel_names)
+                added_layers = self.viewer.add_image(
+                    img, channel_axis=-3, name=channel_names
+                )
+                # added_layers is always a list of Image layers when names is a list
+                for added_layer in added_layers:
+                    layer_name = added_layer.name
+                    added_layer.visible = self.state.get_layer_visibility(
+                        layer_name
+                    )
+                    # Hook event for future changes (use event.source.visible for the new value)
+                    added_layer.events.visible.connect(
+                        lambda event, name=layer_name: self.state.set_layer_visibility(
+                            name, event.source.visible
+                        )
+                    )
+
+            # Add labels, restore visibility
             for lbl_name, lbl in site_obj.labels.items():
-                self.viewer.add_labels(lbl, name=lbl_name)
-            print(f"plate.nwells after: {self.plate.nwells()}")
+                added_layer = self.viewer.add_labels(lbl, name=lbl_name)
+                added_layer.visible = self.state.get_layer_visibility(
+                    lbl_name, is_label=True
+                )
+                # Hook event for future changes (use event.source.visible for the new value)
+                added_layer.events.visible.connect(
+                    lambda event, name=lbl_name: self.state.set_layer_visibility(
+                        name, event.source.visible, is_label=True
+                    )
+                )
+            print(f"plate.nwells after: {self.state.plate.nwells()}")
 
 
 class FolderSelectors(QWidget):
@@ -105,16 +129,15 @@ def make_qwidget() -> NavigationWidget:
     if viewer is None:
         raise RuntimeError("No Napari viewer found. Ensure Napari is running.")
 
+    state = StateManager.get_instance()  # Singleton access
+    state.clear_state()  # Fresh start
+
     """Factory function: Returns the main widget and sets up docks."""
     # Your original main logic, minus click and napari.run()
     well_list = []  # Default to ALL; could add a param later
     nwells, nsites = -1, -1  # Defaults
 
-    print("Plugin: init plate")
-    plate = Plate()  # From _base
-    df_images = pd.DataFrame()  # Initialize
-
-    navigate_widget = NavigationWidget(viewer, plate, df_images)
+    navigate_widget = NavigationWidget(viewer, state)
 
     @magicgui(
         folder={
@@ -125,10 +148,9 @@ def make_qwidget() -> NavigationWidget:
         auto_call=True,
     )
     def select_folder_images(folder: Path):
-        nonlocal plate, df_images
-        print("select_folder_images: reset plate")
-        plate = Plate()  # Reset plate
-        navigate_widget.plate = plate  # Update the widget's reference
+        print("select_folder_images: clear_state")
+        state = StateManager.get_instance()  # Singleton access
+        state.clear_state()  # Fresh start
 
         df_images = create_file_list(
             folder, wells=well_list, nwells=nwells, nsites=nsites
@@ -141,10 +163,15 @@ def make_qwidget() -> NavigationWidget:
 
         if not stacks.empty:
             t_start = time.time()
+            plate = Plate()
             grouped = stacks.groupby(by=[WELL, SITE]).agg(list)
             load_dask_array(grouped, plate, iol="image", name="image")
             print(f"Loaded images in {time.time() - t_start:.2f}s")
             print(f"plate.nwells after load: {plate.nwells()}")
+
+            # set state with the new plate
+            state.plate = plate
+            state.df_images = df_images
 
             # TODO: Handle projections if needed
 
@@ -178,7 +205,8 @@ def make_qwidget() -> NavigationWidget:
         call_button="Load Labels",
     )
     def select_folder_labels(label_name: str, file_type: str, folder: Path):
-        nonlocal plate, df_images
+        state = StateManager.get_instance()  # Singleton access
+
         if not folder or not folder.exists():
             print("Invalid folder")
             return
@@ -199,7 +227,7 @@ def make_qwidget() -> NavigationWidget:
 
         grouped = df_labels.groupby(by=[WELL, SITE]).agg(list)
         t_start = time.time()
-        load_dask_array(grouped, plate, iol="label", name=label_name)
+        load_dask_array(grouped, state.plate, iol="label", name=label_name)
         print(f"Loaded labels '{label_name}' in {time.time() - t_start:.2f}s")
 
         # Refresh the current view after loading new labels
