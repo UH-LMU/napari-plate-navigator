@@ -1,4 +1,5 @@
 # src/napari_plate_navigator/_widget.py
+import os
 import time
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from ._base import (
 # Test settings
 TESTING = True
 if TESTING:
-    user = "user"  # Or import os; os.getenv('USER')
+    user = os.getenv("USER")
     default_image_path = Path(f"/home/{user}/data/pranoy/images/project1")
     default_label_path = Path(f"/home/{user}/data/pranoy/stardist/project1")
 else:
