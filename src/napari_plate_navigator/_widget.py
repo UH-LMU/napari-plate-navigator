@@ -1,6 +1,6 @@
 # src/napari_plate_navigator/_widget.py
+import logging
 import os
-import time
 from pathlib import Path
 
 import napari  # Import for proper Viewer annotation
@@ -10,15 +10,11 @@ from qtpy.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
 
 # Import core logic from _base (assuming you've ported constants/classes/functions there)
 from ._base import (
-    SITE,
-    WELL,
-    Plate,
     StateManager,
-    build_plate_from_df,
-    create_file_list,
     get_mount_path,
-    get_stacks_and_projections,
 )
+from ._reader import SITE, WELL, load_plate
+from ._utils import log_method
 
 # Test settings
 TESTING = True
@@ -34,6 +30,7 @@ else:
 class NavigationWidget(QWidget):
     def __init__(self, viewer: napari.Viewer, state: StateManager):
         super().__init__()
+        self.logger = logging.getLogger(__name__)
         self.viewer = viewer
         self.state = state
 
@@ -62,20 +59,25 @@ class NavigationWidget(QWidget):
         self.site_combo.clear()
         self.site_combo.addItems(self.sites)
 
-    def update_image(self):
+    @log_method
+    def update_image(
+        self, selected_text=None
+    ):  # Accept arg from signal (optional/ignored)
         well = self.well_combo.currentText()
         site = self.site_combo.currentText()
-        print(f"well {well} site {site}")
-        if well and site:
-            print("jee")
-            ###
-            ## Now plate should be populated via closure
-            ###
-            print(f"plate.nwells before clear: {self.state.plate.nwells()}")
+        self.logger.info("well:%s site:%s", well, site)
+
+        if not (well and site):
+            self.logger.info("well or site missing")
+        else:
+            self.logger.debug("jee")
+            self.logger.debug(
+                "plate.nwells before clear: %s", self.state.plate.nwells()
+            )
             self.viewer.layers.clear()
             site_obj = self.state.plate.get_well_site(well, site)
-            site_obj.debug()
-            self.state.plate.debug()
+            # site_obj.debug()
+            # self.state.plate.debug()
 
             # Add images, then restore visibility
             for _img_name, img in site_obj.images.items():
@@ -110,7 +112,9 @@ class NavigationWidget(QWidget):
                         name, event.source.visible, is_label=True
                     )
                 )
-            print(f"plate.nwells after: {self.state.plate.nwells()}")
+            self.logger.info(
+                "plate.nwells after: %d", self.state.plate.nwells()
+            )
 
 
 class FolderSelectors(QWidget):
@@ -133,11 +137,6 @@ def make_qwidget() -> NavigationWidget:
     state = StateManager.get_instance()  # Singleton access
     state.clear_state()  # Fresh start
 
-    """Factory function: Returns the main widget and sets up docks."""
-    # Your original main logic, minus click and napari.run()
-    well_list = []  # Default to ALL; could add a param later
-    nwells, nsites = -1, -1  # Defaults
-
     navigate_widget = NavigationWidget(viewer, state)
 
     @magicgui(
@@ -153,46 +152,39 @@ def make_qwidget() -> NavigationWidget:
         state = StateManager.get_instance()  # Singleton access
         state.clear_state()  # Fresh start
 
-        df_images = create_file_list(
-            folder, wells=well_list, nwells=nwells, nsites=nsites
-        )
-        if df_images.empty:
-            print("No images found")
-            return
+        result = load_plate(
+            folder, file_type="tif"
+        )  # Or 'tif' for ImageXpress
+        state.plate = result["plate"]
+        state.df_images = result["df"]
+        state.metadata = result["metadata"]  # For tab
 
-        stacks, projs = get_stacks_and_projections(df_images)
+        print("*****")
+        print("*****")
+        print("*****")
+        print(state.df_images.head())
+        print("*****")
+        print("*****")
+        print("*****")
 
-        if not stacks.empty:
-            t_start = time.time()
-            plate = Plate()
-            build_plate_from_df(stacks, plate, iol="image", name="image")
-            print(f"Loaded images in {time.time() - t_start:.2f}s")
-            print(f"plate.nwells after load: {plate.nwells()}")
+        wells_list = list(state.df_images[WELL].unique())
+        sites_list = list(state.df_images[SITE].unique())
+        navigate_widget.update_wells(wells_list)
+        navigate_widget.update_sites(sites_list)
 
-            # set state with the new plate
-            state.plate = plate
-            state.df_images = df_images
+        # Manually trigger update_image after setting combos to load initial view
+        # This ensures the first well/site combo is processed after population
+        QTimer.singleShot(0, navigate_widget.update_image)
 
-            # TODO: Handle projections if needed
-
-            wells_list = list(stacks[WELL].unique())
-            sites_list = list(stacks[SITE].unique())
-            navigate_widget.update_wells(wells_list)
-            navigate_widget.update_sites(sites_list)
-
-            # Manually trigger update_image after setting combos to load initial view
-            # This ensures the first well/site combo is processed after population
-            QTimer.singleShot(0, navigate_widget.update_image)
-
-            viewer.dims.axis_labels = [
-                "TimeStep",
-                "Z-slice",
-                "Channel",
-                "Y",
-                "X",
-            ]  # Adjust based on shape
-            for i in range(len(viewer.dims.point)):
-                viewer.dims.set_point(i, 0)
+        viewer.dims.axis_labels = [
+            "TimeStep",
+            "Z-slice",
+            "Channel",
+            "Y",
+            "X",
+        ]  # Adjust based on shape
+        for i in range(len(viewer.dims.point)):
+            viewer.dims.set_point(i, 0)
 
     @magicgui(
         label_name={"label": "Label Name (e.g., nuclei)"},
@@ -205,37 +197,20 @@ def make_qwidget() -> NavigationWidget:
         call_button="Load Labels",
     )
     def select_folder_labels(label_name: str, file_type: str, folder: Path):
-        state = StateManager.get_instance()  # Singleton access
+        # state = StateManager.get_instance()  # Singleton access
 
         if not folder or not folder.exists():
             print("Invalid folder")
             return
 
-        df_labels = create_file_list(
-            folder,
-            file_type=file_type,
-            wells=well_list,
-            nwells=nwells,
-            nsites=nsites,
-        )
-        if df_labels.empty:
-            print("No labels found")
-            return
-
+        _result = load_plate(
+            folder, file_type="tif", iol="label"
+        )  # Or 'tif' for ImageXpress
         # Handle missing labels if needed (using the nonlocal df_images)
         # df_labels = handle_missing_labels(df_images, df_labels, file_type)  # Uncomment when implemented
 
-        t_start = time.time()
-        build_plate_from_df(
-            df_labels, state.plate, iol="label", name=label_name
-        )
-        print(f"Loaded labels '{label_name}' in {time.time() - t_start:.2f}s")
-
         # Refresh the current view after loading new labels
         QTimer.singleShot(0, navigate_widget.update_image)
-
-        for i in range(len(viewer.dims.point)):
-            viewer.dims.set_point(i, 0)
 
     # Setup docks after defining magicguis
     folder_selectors = FolderSelectors(

@@ -3,18 +3,6 @@ from pathlib import Path
 
 import dask.array as da
 import pandas as pd
-from aicsimageio import AICSImage
-from tqdm import tqdm
-
-# Constants
-DIR = "Directory"
-PATH = "Path"
-PLATE = "Plate"
-WELL = "Well"
-SITE = "Site"
-CHANNEL = "Channel"
-TSTEP = "TStep"
-ZSTEP = "ZStep"
 
 
 class Site:
@@ -98,151 +86,6 @@ def get_mount_path() -> Path:
         raise ValueError(f"Unsupported operating system: {current_os}")
 
 
-def create_file_list(
-    directory: Path,
-    file_type: str = "tif",
-    wells: list[str] | None = None,
-    nwells: int = -1,
-    nsites: int = -1,
-) -> pd.DataFrame:
-    if not directory or not directory.exists():
-        return pd.DataFrame()
-
-    files = [
-        str(p)
-        for p in directory.glob(f"**/*.{file_type}")
-        if "thumb" not in p.name
-    ]
-    if not files:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(files, columns=[PATH])
-
-    # Metadata extraction regex (configurable for different instruments)
-    metadata_columns = {
-        "mc2": TSTEP,
-        "mc3": ZSTEP,
-        "mc4": PLATE,
-        "mc5": WELL,
-        "mc6": SITE,
-        "mc7": CHANNEL,
-    }
-    pattern = (
-        r"[/\\](?P<{mc4}>[^/\\]*)"
-        r"(?:[/\\][^/\\]*_Projection)?"
-        r"(?:[/\\]timepoint\d+)?"
-        r"[/\\]t(?P<{mc2}>\d+)_(?P<{mc5}>\w\d{{2}})_s(?P<{mc6}>\d{{1,2}})_(?P<{mc7}>w\d)_z(?P<{mc3}>\d+)"
-    ).format(**metadata_columns)
-
-    extracted = df[PATH].str.extract(pattern)
-    df = df.join(extracted)
-
-    df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
-    df[PLATE] = df[PLATE].astype(str)
-    df[WELL] = df[WELL].astype(str)
-    df[SITE] = df[SITE].astype(int)
-    df[CHANNEL] = df[CHANNEL].astype(str)
-    df[TSTEP] = df[TSTEP].astype(int)
-    df[ZSTEP] = df[ZSTEP].astype(int)
-
-    df.sort_values(
-        by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
-        inplace=True,
-        ignore_index=True,
-    )
-
-    if wells:
-        df = df[df[WELL].isin(wells)]
-    elif nwells > 0:
-        unique_wells = df[WELL].unique()[:nwells]
-        df = df[df[WELL].isin(unique_wells)]
-
-    if nsites > 0:
-        df = df[df[SITE] <= nsites]
-
-    return df
-
-
-def get_stacks_and_projections(
-    df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if df.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    # Channels with z-slices (ZStep > 1)
-    ch_z = df[df[ZSTEP] > 1][CHANNEL].unique()
-
-    # Channels with projections (ZStep == 0)
-    ch_p = df[df[ZSTEP] == 0][CHANNEL].unique()
-
-    assert set(ch_z) == set(
-        ch_p
-    ), "Mismatch between channels with slices and projections"
-
-    # Separate projections (paths containing '_Projection/')
-    projs = (
-        df[df[PATH].str.contains("_Projection/")].copy().reset_index(drop=True)
-    )
-    projs.sort_values(
-        by=[PLATE, WELL, SITE, TSTEP, CHANNEL], inplace=True, ignore_index=True
-    )
-
-    # Stacks: either channels with z-slices or ZStep == 1 if no z-channels
-    if len(ch_z) > 0:
-        stacks = df[df[CHANNEL].isin(ch_z)].copy().reset_index(drop=True)
-    else:
-        stacks = df[df[ZSTEP] == 1].copy().reset_index(drop=True)
-    stacks.sort_values(
-        by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
-        inplace=True,
-        ignore_index=True,
-    )
-
-    return stacks, projs
-
-
-def build_plate_from_df(
-    stacks_df: pd.DataFrame,
-    plate: Plate,
-    iol: str = "image",
-    name: str = "image_name",
-):
-    grouped_df = stacks_df.groupby(by=[WELL, SITE]).agg(list)
-
-    for well, well_group in grouped_df.groupby(WELL):
-        for site, site_group in tqdm(
-            well_group.groupby(SITE), desc=f"Loading well {well}"
-        ):
-            exploded = site_group.explode([PATH, TSTEP, ZSTEP, CHANNEL])
-
-            t_steps = []
-            for _tstep, t_group in exploded.groupby(TSTEP):
-                z_steps = []
-                for _zstep, z_group in t_group.groupby(ZSTEP):
-                    channels = []
-                    for path in z_group[PATH]:
-                        img = AICSImage(path)
-                        data = img.get_image_dask_data().squeeze()
-                        channels.append(data)
-                    z_stack = da.stack(channels, axis=0)
-                    z_steps.append(z_stack)
-                t_stack = da.stack(z_steps, axis=0)
-                t_steps.append(t_stack)
-
-            final_array = da.stack(t_steps, axis=0)
-            print(f"final_array.shape {final_array.shape}")
-
-            well_site = plate.get_well_site(well, site)
-            if iol == "image":
-                well_site.set_image(name, final_array)
-            elif iol == "label":
-                well_site.set_label_image(name, final_array)
-            else:
-                raise ValueError("iol must be 'image' or 'label'")
-    plate.debug()
-    print("load_dask_array return")
-
-
 # TODO: Implement handling for missing labels if needed
 def handle_missing_labels(
     df_images: pd.DataFrame, df_labels: pd.DataFrame, file_type: str
@@ -300,6 +143,4 @@ class StateManager:
 __all__ = [
     "Plate",
     "StateManager",
-    "create_file_list",
-    "build_plate_from_df",
 ]  # For easy imports
