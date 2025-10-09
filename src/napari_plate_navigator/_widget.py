@@ -20,8 +20,12 @@ from ._utils import log_method
 TESTING = True
 if TESTING:
     user = os.getenv("USER")
+    # 2D example
     default_image_path = Path(f"/home/{user}/data/pranoy/images/project1")
     default_label_path = Path(f"/home/{user}/data/pranoy/stardist/project1")
+    # 3D example
+    default_image_path = Path(f"/home/{user}/data/yu/images/visit20251007")
+    default_label_path = Path(f"/home/{user}/data/yu/stardist/visit20251007")
 else:
     default_image_path = get_mount_path() / "instruments/Micro" / "project1"
     default_label_path = get_mount_path() / "airflow/micro" / "project1"
@@ -82,6 +86,7 @@ class NavigationWidget(QWidget):
             # Add images, then restore visibility
             for _img_name, img in site_obj.images.items():
                 # Generate generic channel names based on number of channels (assuming channel dim at index -3)
+                self.logger.debug("%s %s", _img_name, img.shape)
                 num_channels = img.shape[-3]
                 channel_names = [f"Ch{i+1}" for i in range(num_channels)]
                 added_layers = self.viewer.add_image(
@@ -93,10 +98,17 @@ class NavigationWidget(QWidget):
                     added_layer.visible = self.state.get_layer_visibility(
                         layer_name
                     )
-                    # Hook event for future changes (use event.source.visible for the new value)
+                    added_layer.contrast_limits = (
+                        self.state.get_channel_contrast(layer_name)
+                    )  # Restore contrast
                     added_layer.events.visible.connect(
                         lambda event, name=layer_name: self.state.set_layer_visibility(
                             name, event.source.visible
+                        )
+                    )
+                    added_layer.events.contrast_limits.connect(
+                        lambda event, name=layer_name: self.state.set_channel_contrast(
+                            name, event.source.contrast_limits
                         )
                     )
 
@@ -112,6 +124,16 @@ class NavigationWidget(QWidget):
                         name, event.source.visible, is_label=True
                     )
                 )
+
+            # Restore T/Z selection (after dims labels set)
+            # These don't work, investigate later if really needed.
+            # self.viewer.dims.current_step[0] = self.state.get_saved_t()  # T
+            # self.viewer.dims.current_step[1] = self.state.get_saved_z()  # Z
+
+            # For now, set all indices to 0.
+            for i in range(len(self.viewer.dims.point)):
+                self.viewer.dims.set_point(i, 0)
+
             self.logger.info(
                 "plate.nwells after: %d", self.state.plate.nwells()
             )
@@ -139,6 +161,16 @@ def make_qwidget() -> NavigationWidget:
 
     navigate_widget = NavigationWidget(viewer, state)
 
+    # Hook dims changes to save T/Z state
+    # TODO: there is something wrong with this.
+    # For now, set all indices to 0. Leave this here in case needed later.
+    def on_dims_changed(event):
+        current = viewer.dims.current_step
+        state.set_saved_t(current[0])  # T axis 0
+        state.set_saved_z(current[1])  # Z axis 1
+
+    viewer.dims.events.current_step.connect(on_dims_changed)
+
     @magicgui(
         folder={
             "label": "Select Folder (images)",
@@ -149,21 +181,15 @@ def make_qwidget() -> NavigationWidget:
     )
     def select_folder_images(folder: Path):
         print("select_folder_images: clear_state")
-        state = StateManager.get_instance()  # Singleton access
-        state.clear_state()  # Fresh start
 
-        result = load_plate(
+        _result = load_plate(
             folder, file_type="tif"
         )  # Or 'tif' for ImageXpress
-        state.plate = result["plate"]
-        state.df_images = result["df"]
-        state.metadata = result["metadata"]  # For tab
 
         print("*****")
         print("*****")
-        print("*****")
+        print("***** New image loaded. ")
         print(state.df_images.head())
-        print("*****")
         print("*****")
         print("*****")
 
@@ -204,7 +230,7 @@ def make_qwidget() -> NavigationWidget:
             return
 
         _result = load_plate(
-            folder, file_type="tif", iol="label"
+            folder, file_type="tif", iol="label", name=label_name
         )  # Or 'tif' for ImageXpress
         # Handle missing labels if needed (using the nonlocal df_images)
         # df_labels = handle_missing_labels(df_images, df_labels, file_type)  # Uncomment when implemented

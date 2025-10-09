@@ -9,7 +9,7 @@ from aicsimageio import AICSImage
 from aicsimageio.readers import CziReader  # For explicit CZI support
 from tqdm import tqdm
 
-from ._base import Plate
+from ._base import Plate, StateManager
 from ._utils import log_method
 
 logger = logging.getLogger(__name__)  # Module-level logger
@@ -38,6 +38,10 @@ class BaseLoader:
         """Lazy-load a slice as dask array."""
         raise NotImplementedError
 
+    def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
+        """Loader-specific: Stack group_df to per-site (T,Z,C,Y,X) array."""
+        raise NotImplementedError
+
     def separate_stacks_and_aux(
         self, df: pd.DataFrame
     ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
@@ -45,26 +49,6 @@ class BaseLoader:
 
     def get_extra_metadata(self, path: Path) -> dict[str, Any]:
         return {}  # Generic
-
-
-class TiffLoader0(BaseLoader):
-    #    """Fallback for TIFF/PNG multi-file (your current MolDev logic)."""
-    #    def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
-    #        return _base.create_file_list(Path(files[0].parent), 'tif')  # Reuse existing
-
-    def load_slice(
-        self, path: Path, t: int = None, z: int = None, c: int = None
-    ) -> da.Array:
-        img = AICSImage(str(path))
-        #        data = img.get_image_dask_data().squeeze()
-        #        if t is not None:
-        #            data = data[t]
-        #        if z is not None:
-        #            data = data[:, z]  # Assume Z after T
-        #        if c is not None:
-        #            data = data[:, :, c]
-        data = img.get_image_dask_data()
-        return data
 
 
 class TiffLoader(BaseLoader):
@@ -105,6 +89,22 @@ class TiffLoader(BaseLoader):
         data = img.get_image_dask_data(**scene_kwargs).squeeze()
         return data
 
+    def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
+        """Multi-file: Loop T/Z/C paths, stack slices."""
+        exploded = site_group.explode([PATH, TSTEP, ZSTEP, CHANNEL])
+        t_steps = []
+        for _tstep, t_group in exploded.groupby(TSTEP):
+            z_steps = []
+            for _zstep, z_group in t_group.groupby(ZSTEP):
+                channels = [
+                    self.load_slice(Path(p)) for p in z_group[PATH]
+                ]  # Full per-file (C=1)
+                z_stack = da.stack(channels, axis=0)  # Stack C
+                z_steps.append(z_stack)
+            t_stack = da.stack(z_steps, axis=0)  # Stack Z
+            t_steps.append(t_stack)
+        return da.stack(t_steps, axis=0)  # Stack T
+
 
 class ImageXpressLoader(TiffLoader):
     """Specific loader for Molecular Devices ImageXpress (regex + proj logic)."""
@@ -124,7 +124,7 @@ class ImageXpressLoader(TiffLoader):
             r"[/\\](?P<{mc4}>[^/\\]*)"
             r"(?:[/\\][^/\\]*_Projection)?"
             r"(?:[/\\]timepoint\d+)?"
-            r"[/\\]t(?P<{mc2}>\d+)_(?P<{mc5}>\w\d{{2}})_s(?P<{mc6}>\d{{1,2}})_(?P<{mc7}>w\d)_z(?P<{mc3}>\d+)"
+            r"[/\\]t(?P<{mc2}>\d+)_(?P<{mc5}>\w\d{{2}})_s(?P<{mc6}>\d{{1,2}})_w(?P<{mc7}>\d)_z(?P<{mc3}>\d+)"
         ).format(**metadata_columns)
         extracted = df[PATH].str.extract(pattern)
         df = df.join(extracted)
@@ -133,7 +133,7 @@ class ImageXpressLoader(TiffLoader):
         df[PLATE] = df[PLATE].astype(str)
         df[WELL] = df[WELL].astype(str)
         df[SITE] = df[SITE].astype(int)
-        df[CHANNEL] = df[CHANNEL].astype(str)
+        df[CHANNEL] = df[CHANNEL].astype(int)
         df[TSTEP] = df[TSTEP].astype(int)
         df[ZSTEP] = df[ZSTEP].astype(int)
 
@@ -144,35 +144,114 @@ class ImageXpressLoader(TiffLoader):
         )
         return df
 
+    # In _reader.py (Updated ImageXLoader.build_site_array)
+    @log_method
+    def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
+        """Multi-file: Loop T outer, C middle, Z inner. Repeat single-Z channels to full_Z."""
+        exploded = site_group.explode([PATH, TSTEP, ZSTEP, CHANNEL])
+
+        # Find global max Z from channels with stacks (for repetition)
+        full_z = (
+            exploded[exploded[ZSTEP] > 0][ZSTEP].max() + 1
+        )  # e.g., 10 Z slices
+        logger.debug("full_z %d", full_z)
+
+        t_steps = []
+        for _tstep, t_group in exploded.groupby(TSTEP):
+            c_groups = []
+            for channel, c_group in t_group.groupby(CHANNEL):
+                logger.debug("channel %s", channel)
+                z_steps = []
+                for _zstep, z_subgroup in c_group.groupby(ZSTEP):
+                    # Assume one path per Z/C/T (HCS norm)
+                    path = z_subgroup[PATH].iloc[0]
+                    logger.debug("path %s", path)
+                    data = self.load_slice(
+                        Path(path)
+                    )  # Full per-file (Y,X or small)
+                    z_steps.append(data)
+                # Stack Z for this C/T
+                c_stack = da.stack(z_steps, axis=0)  # Shape (Z_actual, Y, X)
+                logger.debug("c_stack.shape %s", c_stack.shape)
+
+                # Repeat if single-Z (proj/single channels)
+                if c_stack.shape[0] == 1 and (full_z > 2):
+                    c_stack = da.repeat(
+                        c_stack, repeats=full_z, axis=0
+                    )  # (full_Z, Y, X)
+                elif c_stack.shape[0] != full_z:
+                    logger.warning(
+                        "Channel %s has %s Z != full %s; truncating",
+                        channel,
+                        c_stack.shape[0],
+                        full_z,
+                    )
+                    c_stack = c_stack[:full_z]  # Or pad if < full
+                logger.debug("c_stack.shape %s", c_stack.shape)
+
+                c_groups.append(c_stack)
+
+            # Stack C for this T
+            t_c_stack = da.stack(
+                c_groups, axis=-1
+            )  # (full_Z, Y, X, C) → transpose to (C, full_Z, Y, X) if needed
+            t_c_stack = da.moveaxis(t_c_stack, -1, 0)  # To (C, full_Z, Y, X)
+            t_steps.append(t_c_stack)
+
+        # Stack T: (T, C, full_Z, Y, X) → transpose to (T, full_Z, C, Y, X) for Napari
+        full_array = da.stack(t_steps, axis=0)
+        full_array = da.moveaxis(
+            full_array, 1, 2
+        )  # (T, C, full_Z, Y, X) → (T, full_Z, C, Y, X)
+        return full_array
+
+    @log_method
     def separate_stacks_and_aux(
         self, df: pd.DataFrame
     ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
         # Your get_stacks_and_projections code here
-        ch_z = df[df[ZSTEP] > 1][CHANNEL].unique()
-        ch_p = df[df[ZSTEP] == 0][CHANNEL].unique()
-        assert set(ch_z) == set(
-            ch_p
-        ), "Mismatch between channels with slices and projections"
-        projs = (
-            df[df[PATH].str.contains("_Projection/")]
-            .copy()
-            .reset_index(drop=True)
-        )
-        projs.sort_values(
-            by=[PLATE, WELL, SITE, TSTEP, CHANNEL],
-            inplace=True,
-            ignore_index=True,
-        )
-        if len(ch_z) > 0:
-            stacks = df[df[CHANNEL].isin(ch_z)].copy().reset_index(drop=True)
+        ch_stack = df[df[ZSTEP] > 1][CHANNEL].unique()
+        ch_proj = df[df[ZSTEP] == 0][CHANNEL].unique()
+        logger.info("ch_stack: %s", ch_stack)
+        logger.info("ch_proj: %s", ch_proj)
+
+        # list of unique channel/zstep combinations
+        cz = df[[CHANNEL, ZSTEP]].drop_duplicates()
+        # remove projections
+        cz = cz[cz[ZSTEP] != 0]
+        gcz = cz.groupby(CHANNEL).count().reset_index()
+        print(gcz)
+        mask = gcz["ZStep"] != 1
+        ch_single = gcz[mask][CHANNEL].values
+        logger.info("ch_single: %s", ch_proj)
+
+        stacks = pd.DataFrame()
+        projs = pd.DataFrame()
+        singles = pd.DataFrame()
+
+        # ignore duplicates in _Projection/
+        df = df[~df[DIR].str.endswith("_Projection")]
+
+        projs = df[df[CHANNEL].isin(ch_proj)].copy().reset_index(drop=True)
+        aux = {"projection": projs}  # Aux dict
+        if len(ch_stack) > 0:
+            stacks = (
+                df[df[CHANNEL].isin(ch_stack)].copy().reset_index(drop=True)
+            )
+            singles = (
+                df[df[CHANNEL].isin(ch_single)].copy().reset_index(drop=True)
+            )
+            aux["single_image"] = singles
         else:
             stacks = df[df[ZSTEP] == 1].copy().reset_index(drop=True)
-            stacks.sort_values(
-                by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
-                inplace=True,
-                ignore_index=True,
-            )
-        return stacks, {"projection": projs}  # Aux dict
+
+        # stacks.sort_values(
+        #    by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
+        #    inplace=True,
+        #    ignore_index=True,
+        # )
+
+        return stacks, aux
 
 
 class CziLoader(BaseLoader):
@@ -308,6 +387,7 @@ def load_plate(
     nwells: int = -1,
     nsites: int = -1,
     iol: str = "image",  # or 'label'
+    name: str = "image_or_label_name",
 ) -> dict[str, Any]:
     """
     Orchestrator: Load folder into plate/df/metadata.
@@ -368,7 +448,7 @@ def load_plate(
             PLATE: str,
             WELL: str,
             SITE: int,
-            CHANNEL: str,
+            CHANNEL: int,
             TSTEP: int,
             ZSTEP: int,
         }
@@ -388,26 +468,39 @@ def load_plate(
         df = df[df[SITE] <= nsites]
 
     # Separate main/aux (loader-specific)
-    stacks, aux_data = loader.separate_stacks_and_aux(
+    main_df, aux_dict = loader.separate_stacks_and_aux(
         df
     )  # New method on loader (empty for generic)
-
-    # Build plate (pass loader for slicing)
-    plate = Plate()
-    build_plate_from_df(
-        stacks, plate, iol=iol, name="image", loader=loader
-    )  # Updated builder takes loader
 
     # Extra metadata (loader-specific, e.g., dims/acq_date)
     metadata = loader.get_extra_metadata(
         files[0]
     )  # New method, e.g., {'dims': img.dims, ...}
 
+    state = StateManager.get_instance()  # Singleton access
+    # reset state if new image loaded
+    if iol == "image":
+        state.clear_state()  # Fresh start
+        state.plate = Plate()
+        state.df_images = df
+        state.metadata = metadata
+
+    # Build plate (pass loader for slicing)
+    plate = StateManager.get_instance().plate
+    build_plate_from_df(
+        # {'stack': main_df, **aux_dict}, plate, iol=iol, name="image", loader=loader
+        df,
+        plate,
+        iol=iol,
+        name=name,
+        loader=loader,
+    )  # Updated builder takes loader
+
     return {
         "df": df,
         "plate": plate,
         "metadata": metadata,
-        "aux_data": aux_data,
+        "aux_data": aux_dict,
     }
 
 
@@ -419,80 +512,17 @@ def build_plate_from_df(
     name: str = "image_name",
     loader: BaseLoader = None,
 ):
-    """Build plate hierarchy from df, loader-aware for multi/single-file."""
-    grouped_df = stacks_df.groupby(by=[WELL, SITE]).agg(list)
+    """Generic builder: Groupby, delegate stacking to loader."""
+    if loader is None:
+        raise ValueError("Loader required for format-specific stacking")
+    grouped_df = stacks_df.groupby([WELL, SITE])
 
-    for well, well_group in grouped_df.groupby(WELL):
-        for site, site_group in tqdm(
-            well_group.groupby(SITE), desc=f"Building well {well}"
-        ):
-            exploded = site_group.explode([PATH, TSTEP, ZSTEP, CHANNEL])
-
-            t_steps = []
-            for tstep, t_group in exploded.groupby(TSTEP):
-                z_steps = []
-                for zstep, z_group in t_group.groupby(ZSTEP):
-                    channels = []
-
-                    # for ch_path in z_group[PATH]:
-                    #   c = int(z_group[CHANNEL].iloc[0])  # Convert 'w1' to 1 (HCS str to int)
-                    #    if loader:
-                    #        data = loader.load_slice(ch_path, t=tstep, z=zstep, c=c)
-                    #    else:
-                    #        # Fallback (original)
-                    #        img = AICSImage(ch_path)
-                    #        data = img.get_image_dask_data().squeeze()
-                    #    channels.append(data)
-
-                    # unique_paths = z_group[PATH].unique()  # Dedupe for single-file
-                    for (
-                        ch_idx,
-                        row,
-                    ) in z_group.iterrows():  # Or loop unique if multi
-                        path = Path(row[PATH])
-                        if (
-                            loader
-                            and hasattr(loader, "is_single_file")
-                            and loader.is_single_file
-                        ):
-                            # Single-file (e.g., CZI): Slice embedded dims from one path
-                            logger.info("using single-file loader")
-                            data = loader.load_slice(
-                                path, t=tstep, z=zstep, c=row[CHANNEL]
-                            )
-                        else:
-                            # Multi-file fallback (ImageXpress): Load per path
-                            if loader:
-                                logger.info("using multi-file loader")
-                                c = ch_idx[1]
-                                logger.debug(
-                                    "t:%d z:%d ch_idx:%s c:%d",
-                                    tstep,
-                                    zstep,
-                                    ch_idx,
-                                    c,
-                                )
-                                data = loader.load_slice(
-                                    path, t=tstep, z=zstep, c=c
-                                )
-                            else:
-                                logger.info("using AICSImage directly")
-                                img = AICSImage(str(path))
-                                data = img.get_image_dask_data().squeeze()
-                        channels.append(data)
-                    z_stack = da.stack(channels, axis=0)
-                    z_steps.append(z_stack)
-                t_stack = da.stack(z_steps, axis=0)
-                t_steps.append(t_stack)
-
-            final_array = da.stack(t_steps, axis=0)
-            logger.debug("final_array.shape %s", final_array.shape)
-
-            well_site = plate.get_well_site(well, site)
-            if iol == "image":
-                well_site.set_image(name, final_array)
-            elif iol == "label":
-                well_site.set_label_image(name, final_array)
-            else:
-                raise ValueError("iol must be 'image' or 'label'")
-    # plate.debug()
+    for (well, site), site_group in tqdm(grouped_df, desc="Building sites"):
+        logger.debug("well %s site %s", well, site)
+        site_array = loader.build_site_array(site_group)
+        logger.debug("site %s array shape: %s", site, site_array.shape)
+        well_site = plate.get_well_site(well, site)
+        if iol == "image":
+            well_site.set_image(name, site_array)
+        elif iol == "label":
+            well_site.set_label_image(name, site_array)

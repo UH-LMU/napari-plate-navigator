@@ -11,12 +11,18 @@ class Site:
         self.images: dict[str, da.Array] = (
             {}
         )  # Key: image name, Value: Dask array
+        self.auxiliaries: dict[str, da.Array] = (
+            {}
+        )  # Key: label name, Value: Dask array
         self.labels: dict[str, da.Array] = (
             {}
         )  # Key: label name, Value: Dask array
 
     def set_image(self, name: str, image: da.Array):
         self.images[name] = image
+
+    def set_auxiliary(self, name: str, array: da.Array):
+        self.auxiliaries[name] = array
 
     def set_label_image(self, name: str, label_image: da.Array):
         self.labels[name] = label_image
@@ -112,6 +118,11 @@ class StateManager:
             {}
         )  # e.g., {'Ch1': True, 'Ch2': False}
         self.label_vis: dict[str, bool] = {}  # e.g., {'nuclei': True}
+        self.channel_contrast: dict[str, tuple[float, float]] = (
+            {}
+        )  # e.g., {'Ch1': (0.0, 255.0)}
+        self.saved_t: int = 0  # Selected time step
+        self.saved_z: int = 0  # Selected Z slice
         self._initialized = True
 
     def get_instance() -> "StateManager":
@@ -131,12 +142,35 @@ class StateManager:
         vis_dict = self.label_vis if is_label else self.channel_vis
         return vis_dict.get(layer_name, True)
 
+    def get_channel_contrast(self, layer_name: str) -> tuple[float, float]:
+        """Get contrast limits from state (default (0, 255) if unset)."""
+        return self.channel_contrast.get(layer_name, (0.0, 65535.0))
+
+    def set_channel_contrast(
+        self, layer_name: str, limits: tuple[float, float]
+    ):
+        """Update contrast in state."""
+        self.channel_contrast[layer_name] = limits
+
+    def get_saved_t(self) -> int:
+        return self.saved_t
+
+    def set_saved_t(self, t: int):
+        self.saved_t = t  # max(0, min(t, self.plate.shape[0] - 1 if self.plate else 0))  # Clamp
+
+    def get_saved_z(self) -> int:
+        return self.saved_z
+
+    def set_saved_z(self, z: int):
+        self.saved_z = z  # max(0, min(z, self.plate.shape[1] - 1 if self.plate else 0))  # Clamp
+
     def clear_state(self):
         """Reset on new plate load."""
         self.plate = None
         self.df_images = pd.DataFrame()
         self.channel_vis.clear()
         self.label_vis.clear()
+        self.channel_contrast.clear()
 
 
 # Optional: Expose key bits for widget
