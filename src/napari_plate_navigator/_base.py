@@ -1,8 +1,13 @@
+import logging
 import platform
 from pathlib import Path
 
 import dask.array as da
 import pandas as pd
+
+from ._utils import log_method
+
+logger = logging.getLogger(__name__)  # Module-level logger
 
 
 class Site:
@@ -18,6 +23,9 @@ class Site:
             {}
         )  # Key: label name, Value: Dask array
 
+        self.filelists_img: dict[str, pd.DataFrame] = {}
+        self.filelists_lbl: dict[str, pd.DataFrame] = {}
+
     def set_image(self, name: str, image: da.Array):
         self.images[name] = image
 
@@ -26,6 +34,46 @@ class Site:
 
     def set_label_image(self, name: str, label_image: da.Array):
         self.labels[name] = label_image
+
+    def set_filelist_img(self, name: str, df: pd.DataFrame):
+        self.filelists_img[name] = df
+
+    def set_filelist_lbl(self, name: str, df: pd.DataFrame):
+        self.filelists_lbl[name] = df
+        logger.debug("set_filelist_lbl %s", self.filelists_lbl.keys)
+
+    @log_method
+    def get_images(self) -> dict[str, da.Array]:
+        logger.debug("images.keys %s", self.images.keys())
+        if len(self.images) != len(self.filelists_img):
+            # build arrays if not built yet
+            self.build_on_demand()
+        logger.debug("images.keys %s", self.images.keys())
+        return self.images
+
+    @log_method
+    def get_labels(self) -> dict[str, da.Array]:
+        logger.debug("filelists_lbl.keys %s", self.filelists_lbl.keys())
+        logger.debug("labels.keys %s", self.labels.keys())
+        if len(self.labels) != len(self.filelists_lbl):
+            # build arrays if not built yet
+            self.build_on_demand()
+        logger.debug("labels.keys %s", self.labels.keys())
+        return self.labels
+
+    def build_on_demand(self):
+        """Lazy build on demand."""
+        loader = StateManager.get_instance().loader
+
+        for key, df in self.filelists_img.items():
+            if df.empty or key in self.images:
+                continue
+            self.images[key] = loader.build_site_array(df)
+
+        for key, df in self.filelists_lbl.items():
+            if df.empty or key in self.labels:
+                continue
+            self.labels[key] = loader.build_site_array(df)
 
     def debug(self):
         print(f"SITE {self.name}")
@@ -123,6 +171,7 @@ class StateManager:
         )  # e.g., {'Ch1': (0.0, 255.0)}
         self.saved_t: int = 0  # Selected time step
         self.saved_z: int = 0  # Selected Z slice
+        self.loader = None
         self._initialized = True
 
     def get_instance() -> "StateManager":
@@ -171,6 +220,7 @@ class StateManager:
         self.channel_vis.clear()
         self.label_vis.clear()
         self.channel_contrast.clear()
+        self.loader = None
 
 
 # Optional: Expose key bits for widget

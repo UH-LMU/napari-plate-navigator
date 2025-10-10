@@ -484,17 +484,20 @@ def load_plate(
         state.plate = Plate()
         state.df_images = df
         state.metadata = metadata
+        state.loader = loader
+
+    logger.debug("name %s", name)
 
     # Build plate (pass loader for slicing)
     plate = StateManager.get_instance().plate
-    build_plate_from_df(
+    build_plate_from_df_fast(
         # {'stack': main_df, **aux_dict}, plate, iol=iol, name="image", loader=loader
         df,
         plate,
         iol=iol,
         name=name,
-        loader=loader,
-    )  # Updated builder takes loader
+        # loader=loader,
+    )
 
     return {
         "df": df,
@@ -502,6 +505,24 @@ def load_plate(
         "metadata": metadata,
         "aux_data": aux_dict,
     }
+
+
+@log_method
+def build_plate_from_df_fast(
+    stacks_df: pd.DataFrame,
+    plate: Plate,
+    iol: str = "image",
+    name: str = "image_name",
+):
+    grouped_df = stacks_df.groupby([WELL, SITE])
+
+    for (well, site), site_group in tqdm(grouped_df, desc="Prepping sites"):
+        logger.debug("well %s site %s", well, site)
+        well_site = plate.get_well_site(well, site)
+        if iol == "image":
+            well_site.set_filelist_img(name, site_group)
+        elif iol == "label":
+            well_site.set_filelist_lbl(name, site_group)
 
 
 @log_method

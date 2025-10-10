@@ -16,6 +16,8 @@ from ._base import (
 from ._reader import SITE, WELL, load_plate
 from ._utils import log_method
 
+logger = logging.getLogger(__name__)
+
 # Test settings
 TESTING = True
 if TESTING:
@@ -74,7 +76,6 @@ class NavigationWidget(QWidget):
         if not (well and site):
             self.logger.info("well or site missing")
         else:
-            self.logger.debug("jee")
             self.logger.debug(
                 "plate.nwells before clear: %s", self.state.plate.nwells()
             )
@@ -84,7 +85,7 @@ class NavigationWidget(QWidget):
             # self.state.plate.debug()
 
             # Add images, then restore visibility
-            for _img_name, img in site_obj.images.items():
+            for _img_name, img in site_obj.get_images().items():
                 # Generate generic channel names based on number of channels (assuming channel dim at index -3)
                 self.logger.debug("%s %s", _img_name, img.shape)
                 num_channels = img.shape[-3]
@@ -113,7 +114,7 @@ class NavigationWidget(QWidget):
                     )
 
             # Add labels, restore visibility
-            for lbl_name, lbl in site_obj.labels.items():
+            for lbl_name, lbl in site_obj.get_labels().items():
                 added_layer = self.viewer.add_labels(lbl, name=lbl_name)
                 added_layer.visible = self.state.get_layer_visibility(
                     lbl_name, is_label=True
@@ -222,11 +223,12 @@ def make_qwidget() -> NavigationWidget:
         },
         call_button="Load Labels",
     )
+    @log_method
     def select_folder_labels(label_name: str, file_type: str, folder: Path):
         # state = StateManager.get_instance()  # Singleton access
-
+        logger.debug("label_name %s path %s", label_name, str(folder))
         if not folder or not folder.exists():
-            print("Invalid folder")
+            logger.error("Invalid folder")
             return
 
         _result = load_plate(
