@@ -522,3 +522,5 @@ dependencies:
 - zlib-ng=2.2.5=hde8ca8f_0
 - zstandard=0.25.0=py310h139afa4_0
 - zstd=1.5.7=hb8e6e7a_2
+- pip:
+  - git+https://github.com/UH-LMU/napari-plate-navigator.git
