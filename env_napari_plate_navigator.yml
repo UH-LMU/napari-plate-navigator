@@ -1,0 +1,22 @@
+name: napari-plate-navigator  # Name of your environment
+
+channels:
+  - conda-forge  # Additional channel for some packages
+
+dependencies:
+  - aicsimageio
+  - aicspylibczi
+  - dask
+  - jupyterlab
+  - matplotlib
+  - napari
+  - numpy
+  - pandas
+  - pip
+  - pyqt
+  - python=3.10
+  - scikit-learn
+  - scipy
+  - seaborn
+  - pip:
+    - git+https://github.com/UH-LMU/napari-plate-navigator.git
