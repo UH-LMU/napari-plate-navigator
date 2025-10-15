@@ -254,6 +254,42 @@ class ImageXpressLoader(TiffLoader):
         return stacks, aux
 
 
+class PhenixLoader(TiffLoader):
+
+    def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
+        """Use original regex for MolDev naming."""
+        df = pd.DataFrame({PATH: [str(f) for f in files]})
+        metadata_columns = {
+            "mc1": WELL,
+            "mc2": SITE,
+            "mc3": ZSTEP,
+            "mc4": CHANNEL,
+            "mc5": PLATE,
+        }
+        pattern = (
+            r"[/\\](?P<{mc5}>[^/\\]*)"
+            r"[/\\](?P<{mc1}>r\d\dc\d\d)f(?P<{mc2}>\d\d)p(?P<{mc3}>\d\d)"
+            r"-ch(?P<{mc4}>\d)"
+        ).format(**metadata_columns)
+        extracted = df[PATH].str.extract(pattern)
+        df = df.join(extracted)
+
+        df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
+        df[PLATE] = df[PLATE].astype(str)
+        df[WELL] = df[WELL].astype(str)
+        df[SITE] = df[SITE].astype(int)
+        df[CHANNEL] = df[CHANNEL].astype(int)
+        # df[TSTEP] = df[TSTEP].astype(int)
+        df[ZSTEP] = df[ZSTEP].astype(int)
+
+        df.sort_values(
+            by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
+            inplace=True,
+            ignore_index=True,
+        )
+        return df
+
+
 class CziLoader(BaseLoader):
     """Loader for Zeiss CZI files (monolithic or multi-scene)."""
 
