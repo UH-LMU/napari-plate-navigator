@@ -28,6 +28,8 @@ if TESTING:
     # 3D example
     default_image_path = Path(f"/home/{user}/data/yu/images/visit20251007")
     default_label_path = Path(f"/home/{user}/data/yu/stardist/visit20251007")
+    # Phenix example
+    default_image_path = Path(f"/home/{user}/data/connexin")
 else:
     default_image_path = get_mount_path() / "instruments/Micro" / "project1"
     default_label_path = get_mount_path() / "airflow/micro" / "project1"
@@ -194,10 +196,14 @@ def make_qwidget() -> NavigationWidget:
         print("*****")
         print("*****")
 
-        wells_list = list(state.df_images[WELL].unique())
-        sites_list = list(state.df_images[SITE].unique())
-        navigate_widget.update_wells(wells_list)
-        navigate_widget.update_sites(sites_list)
+        try:
+            wells_list = list(state.df_images[WELL].unique())
+            sites_list = list(state.df_images[SITE].unique())
+            navigate_widget.update_wells(wells_list)
+            navigate_widget.update_sites(sites_list)
+        except KeyError:
+            # stop here if state df doesn't have WELL column
+            return
 
         # Manually trigger update_image after setting combos to load initial view
         # This ensures the first well/site combo is processed after population

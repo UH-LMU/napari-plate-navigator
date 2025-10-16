@@ -1,5 +1,6 @@
 # src/napari_plate_navigator/_reader.py
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,10 @@ ZSTEP = "ZStep"
 class BaseLoader:
     """Abstract base for file loaders."""
 
+    def can_read(self, path: Path) -> bool:
+        """Return True if loader can read the given file."""
+        raise NotImplementedError
+
     def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
         """Extract T/Z/C/WELL/SITE/PLATE from files/metadata, return df."""
         raise NotImplementedError
@@ -52,9 +57,22 @@ class BaseLoader:
 
 
 class TiffLoader(BaseLoader):
+    def can_read(self, path: Path) -> bool:
+        try:
+            metadata = self.discover_metadata([path])
+            if WELL in metadata.columns:
+                return True
+        except ValueError as e:
+            logger.debug(e.__class__.__name__)
+            logger.warning(
+                "%s failed to read metadata: %s", self.__class__.__name__, e
+            )
+
+        return False
+
     def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
         """Simple df from paths; no parsing—fallback for non-structured files."""
-        df = pd.DataFrame({"PATH": [str(f) for f in files]})
+        df = pd.DataFrame({"Path": [str(f) for f in files]})
         df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
         # Assign defaults (extend with basic regex if needed)
         df[PLATE] = "1"
@@ -110,6 +128,9 @@ class ImageXpressLoader(TiffLoader):
     """Specific loader for Molecular Devices ImageXpress (regex + proj logic)."""
 
     def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
+        # exclude thumbnail images
+        files = [f for f in files if "thumb" not in f.name]
+
         """Use original regex for MolDev naming."""
         df = pd.DataFrame({PATH: [str(f) for f in files]})
         metadata_columns = {
@@ -129,13 +150,20 @@ class ImageXpressLoader(TiffLoader):
         extracted = df[PATH].str.extract(pattern)
         df = df.join(extracted)
 
-        df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
-        df[PLATE] = df[PLATE].astype(str)
-        df[WELL] = df[WELL].astype(str)
-        df[SITE] = df[SITE].astype(int)
-        df[CHANNEL] = df[CHANNEL].astype(int)
-        df[TSTEP] = df[TSTEP].astype(int)
-        df[ZSTEP] = df[ZSTEP].astype(int)
+        try:
+            df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
+            df[PLATE] = df[PLATE].astype(str)
+            df[WELL] = df[WELL].astype(str)
+            df[SITE] = df[SITE].astype(int)
+            df[CHANNEL] = df[CHANNEL].astype(int)
+            df[TSTEP] = df[TSTEP].astype(int)
+            df[ZSTEP] = df[ZSTEP].astype(int)
+        except ValueError as e:
+            logger.error("Failed to convert metadata type %s", e)
+            df.to_csv(
+                f"/home/{os.getenv('USER')}/tmp/imageXpress_metadata.csv"
+            )
+            raise
 
         df.sort_values(
             by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
@@ -257,7 +285,6 @@ class ImageXpressLoader(TiffLoader):
 class PhenixLoader(TiffLoader):
 
     def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
-        """Use original regex for MolDev naming."""
         df = pd.DataFrame({PATH: [str(f) for f in files]})
         metadata_columns = {
             "mc1": WELL,
@@ -274,6 +301,10 @@ class PhenixLoader(TiffLoader):
         extracted = df[PATH].str.extract(pattern)
         df = df.join(extracted)
 
+        # remove leading zeros
+        for col in [SITE, CHANNEL, ZSTEP]:
+            df[col] = df[col].str.lstrip("0")
+
         df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
         df[PLATE] = df[PLATE].astype(str)
         df[WELL] = df[WELL].astype(str)
@@ -281,6 +312,11 @@ class PhenixLoader(TiffLoader):
         df[CHANNEL] = df[CHANNEL].astype(int)
         # df[TSTEP] = df[TSTEP].astype(int)
         df[ZSTEP] = df[ZSTEP].astype(int)
+
+        # fix timestep for now
+        df[TSTEP] = 1
+
+        # df.to_csv(f"/home/{user}/tmp/PhenixLoader.get_metadata.csv")
 
         df.sort_values(
             by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
@@ -292,6 +328,9 @@ class PhenixLoader(TiffLoader):
 
 class CziLoader(BaseLoader):
     """Loader for Zeiss CZI files (monolithic or multi-scene)."""
+
+    def can_read(self, path: Path) -> bool:
+        return path.suffix.lower() == ".czi"
 
     def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
         """Parse filename for WELL/SITE/PLATE, embedded for T/Z/C."""
@@ -401,17 +440,21 @@ class CziLoader(BaseLoader):
         return data
 
 
-# Simple registry (expandable)
-LOADERS = {
-    ".czi": CziLoader(),
-    ".tif": ImageXpressLoader(),
-    # Add .png for Phenix, etc.
-}
-
-
+@log_method
 def get_loader(path: Path) -> BaseLoader:
-    ext = path.suffix.lower()
-    return LOADERS.get(ext, TiffLoader())  # Fallback to TIFF logic
+    loaders = {
+        "czi": CziLoader(),
+        "imagexpress": ImageXpressLoader(),
+        "phenix": PhenixLoader(),
+        "tif": TiffLoader(),
+    }
+    for key in loaders:
+        loader = loaders[key]
+        if loader.can_read(path):
+            logger.debug("selected %s", str(loader))
+            return loader
+
+    raise ValueError("No loader found for " + str(path))
 
 
 @log_method
@@ -430,6 +473,7 @@ def load_plate(
     Returns: {'df': pd.DataFrame, 'plate': Plate, 'metadata': dict, 'aux_data': dict}
     """
     if not directory.exists():
+        logger.error("Directory does not exist: %s", directory)
         return {
             "df": pd.DataFrame(),
             "plate": Plate(),
@@ -437,25 +481,19 @@ def load_plate(
             "aux_data": {},
         }
 
-    # Glob files based on type
-    if file_type in ["tif", "tiff", "png"]:
-        files = [
-            p
-            for p in directory.glob(f"**/*.{file_type}")
-            if "thumb" not in p.name
-        ]
-    else:
-        files = (
-            [directory] if directory.suffix.lower() == f".{file_type}" else []
-        )
+    # Glob all files
+    files = [p for p in directory.glob("**/*") if p.is_file()]
 
     if not files:
+        logger.error("No files found in directory: %s", directory)
         return {
             "df": pd.DataFrame(),
             "plate": Plate(),
             "metadata": {},
             "aux_data": {},
         }
+
+    logger.debug("len(files) %d", len(files))
 
     # Pick loader (preset overrides auto)
     first_file = files[0]
@@ -467,6 +505,7 @@ def load_plate(
         # Map preset to loader (expandable)
         loader_map = {
             "imagexpress": ImageXpressLoader(),
+            "phenix": PhenixLoader(),
             "czi": CziLoader(),
             "generic": TiffLoader(),
         }
