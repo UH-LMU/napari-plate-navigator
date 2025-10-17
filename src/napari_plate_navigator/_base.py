@@ -172,6 +172,7 @@ class StateManager:
         self.saved_t: int = 0  # Selected time step
         self.saved_z: int = 0  # Selected Z slice
         self.loader = None
+        self.czi = None
         self._initialized = True
 
     def get_instance() -> "StateManager":

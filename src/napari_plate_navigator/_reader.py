@@ -336,58 +336,24 @@ class CziLoader(BaseLoader):
         """Parse filename for WELL/SITE/PLATE, embedded for T/Z/C."""
         if not files:
             return pd.DataFrame()
+
+        # exclude thumbnail images
+        files = [f for f in files if f.suffix.lower() == ".czi"]
+
         path = files[0]  # Assume single file for now; extend for multi later
-        img = AICSImage(str(path), reader=CziReader)
 
-        # Filename parsing (e.g., "Plate1_WellA1_Site1_TimeSeries.czi")
-        name = path.stem
-        import re
+        # reconstructing mosaic will take ages, skip
+        img = AICSImage(str(path), reconstruct_mosaic=False)
 
-        plate_match = re.search(r"Plate(?P<plate>\d+)", name)
-        well_match = re.search(r"Well(?P<well>[A-P]\d{1,2})", name)
-        site_match = re.search(r"Site(?P<site>\d+)", name)
+        # store xarray in state
+        xr = img.get_xarray_dask_stack()
+        StateManager.get_instance.czi = xr
 
-        # Embedded dims (AICSImage exposes T/Z/C counts)
-        t_max = img.dims.T if img.dims.T > 1 else 1
-        z_max = img.dims.Z if img.dims.Z > 1 else 1
-        c_max = img.dims.C
+        # TODO: use code from Zeiss OAD repo to read metadata
 
-        # Build df with cartesian product for T/Z/C
-        rows = []
-        for t in range(t_max):
-            for z in range(z_max):
-                for c in range(c_max):
-                    row = {
-                        PATH: str(path),
-                        PLATE: (
-                            plate_match.group("plate") if plate_match else "1"
-                        ),
-                        WELL: well_match.group("well") if well_match else "A1",
-                        SITE: (
-                            int(site_match.group("site")) if site_match else 1
-                        ),
-                        TSTEP: t,
-                        ZSTEP: z,
-                        CHANNEL: c,
-                        DIR: str(path.parent),
-                    }
-                    rows.append(row)
-        df = pd.DataFrame(rows)
-        df = df.astype(
-            {
-                PLATE: str,
-                WELL: str,
-                SITE: int,
-                TSTEP: int,
-                ZSTEP: int,
-                CHANNEL: str,
-            }
-        )
-        df.sort_values(
-            by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
-            inplace=True,
-            ignore_index=True,
-        )
+        # construct dataframe the holds the well/site combinations
+        df = pd.DataFrame()
+
         return df
 
     def get_extra_metadata(self, path: Path) -> dict[str, Any]:
