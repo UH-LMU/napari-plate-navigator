@@ -6,8 +6,8 @@ from typing import Any
 
 import dask.array as da
 import pandas as pd
-from aicsimageio import AICSImage
-from aicsimageio.readers import CziReader  # For explicit CZI support
+from bioio import BioImage
+import bioio_czi # For explicit CZI support
 from tqdm import tqdm
 
 from ._base import Plate, StateManager
@@ -95,8 +95,8 @@ class TiffLoader(BaseLoader):
     def load_slice(
         self, path: Path, t: int = None, z: int = None, c: int = None
     ) -> da.Array:
-        img = AICSImage(str(path))
-        # Lazy slice via AICSImage params (works for embedded dims or single)
+        img = BioImage(str(path))
+        # Lazy slice via BioImage params (works for embedded dims or single)
         scene_kwargs = {}
         if t is not None:
             scene_kwargs["T"] = t
@@ -343,13 +343,16 @@ class CziLoader(BaseLoader):
         path = files[0]  # Assume single file for now; extend for multi later
 
         # reconstructing mosaic will take ages, skip
-        img = AICSImage(str(path), reconstruct_mosaic=False)
+        img = BioImage(str(path),
+                       reconstruct_mosaic=False,
+                       reader=bioio_czi.Reader)
 
         # store xarray in state
         xr = img.get_xarray_dask_stack()
         StateManager.get_instance.czi = xr
 
-        # TODO: use code from Zeiss OAD repo to read metadata
+        # TODO: use czitools to read metadata
+        md = {}
 
         # construct dataframe the holds the well/site combinations
         df = pd.DataFrame()
@@ -357,7 +360,7 @@ class CziLoader(BaseLoader):
         return df
 
     def get_extra_metadata(self, path: Path) -> dict[str, Any]:
-        img = AICSImage(str(path), reader=CziReader)
+        img = BioImage(str(path), reader=bioio_czi.Reader)
         # Extract your example fields (extend as needed)
         metadata = {
             "filename": path.name,
@@ -393,8 +396,8 @@ class CziLoader(BaseLoader):
     def load_slice(
         self, path: Path, t: int = None, z: int = None, c: int = None
     ) -> da.Array:
-        img = AICSImage(str(path), reader=CziReader)
-        # Lazy slice via AICSImage params
+        img = BioImage(str(path), reader=bioio_czi.Reader)
+        # Lazy slice via BioImage params
         scene_kwargs = {}
         if t is not None:
             scene_kwargs["T"] = t
@@ -412,7 +415,7 @@ def get_loader(path: Path) -> BaseLoader:
         "czi": CziLoader(),
         "imagexpress": ImageXpressLoader(),
         "phenix": PhenixLoader(),
-        "tif": TiffLoader(),
+        #"tif": TiffLoader(),
     }
     for key in loaders:
         loader = loaders[key]
@@ -447,8 +450,9 @@ def load_plate(
             "aux_data": {},
         }
 
-    # Glob all files
-    files = [p for p in directory.glob("**/*") if p.is_file()]
+    # Glob all allowed files
+    formats = [".czi", ".tif", ".tiff"]
+    files = [p for p in directory.glob("**/*") if p.is_file() and p.suffix in formats]
 
     if not files:
         logger.error("No files found in directory: %s", directory)
