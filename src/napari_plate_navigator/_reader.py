@@ -1,6 +1,7 @@
 # src/napari_plate_navigator/_reader.py
 import logging
 import os
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import dask.array as da
 import pandas as pd
 from bioio import BioImage
 import bioio_czi # For explicit CZI support
+from czitools.metadata_tools.czi_metadata import CziMetadata
 from tqdm import tqdm
 
 from ._base import Plate, StateManager
@@ -326,6 +328,27 @@ class PhenixLoader(TiffLoader):
         return df
 
 
+def build_well_df(row, col, idx):
+    """
+    Build a DataFrame from row/col/site arrays, with 'Well' derived for grouping.
+    
+    Args:
+        row: List-like of row indices (e.g., [1, 1, 2, 2])
+        col: List-like of col indices (e.g., [1, 2, 1, 2])
+        idx: List-like of site indices (e.g., [1, 2, 3, 4])
+    
+    Returns:
+        pd.DataFrame with columns ['Row', 'Col', 'Site', 'Well']
+    """
+    df = pd.DataFrame({
+        'Row': row,
+        'Col': col,
+        'Site': idx
+    })
+    df['Well'] = 'row' + df['Row'].astype(str) + 'col' + df['Col'].astype(str)
+    return df
+
+
 class CziLoader(BaseLoader):
     """Loader for Zeiss CZI files (monolithic or multi-scene)."""
 
@@ -348,17 +371,41 @@ class CziLoader(BaseLoader):
                        reader=bioio_czi.Reader)
 
         # store xarray in state
-        xr = img.get_xarray_dask_stack()
-        StateManager.get_instance.czi = xr
+        StateManager.get_instance().czi = img
 
         # TODO: use czitools to read metadata
-        md = {}
+        md = CziMetadata(str(path))
+        row_id = md.sample.well_rowID
+        col_id = md.sample.well_colID
+        scene_id = md.sample.well_indices
+        assert len(row_id) == len(col_id)
+        assert len(col_id) == len(scene_id)
 
         # construct dataframe the holds the well/site combinations
-        df = pd.DataFrame()
+        df = build_well_df(row_id, col_id, scene_id)
 
+        # fill in other columns with dummy values
+        df[PATH] = str(path)
+        df[PLATE] = 'dummy_plate_name'
+        df[CHANNEL] = 0
+        df[TSTEP] = 0
+        df[ZSTEP] = 0
+        
         return df
 
+    @log_method
+    def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
+        logger.debug(site_group[[WELL,SITE]])
+        # convert to int for get_xarray_dask_stack()
+        site = int(site_group[SITE].values[0])
+        logger.debug("site %s", site)
+        
+        # use img stored in state
+        img = StateManager.get_instance().czi
+
+        return img.get_xarray_dask_stack(select_scenes=(site,))
+        
+        
     def get_extra_metadata(self, path: Path) -> dict[str, Any]:
         img = BioImage(str(path), reader=bioio_czi.Reader)
         # Extract your example fields (extend as needed)
@@ -380,16 +427,14 @@ class CziLoader(BaseLoader):
             "size_s": img.dims.S if hasattr(img.dims, "S") else 1,
             "size_b": img.dims.B if hasattr(img.dims, "B") else 1,
             "size_m": img.dims.M if hasattr(img.dims, "M") else 1,
-            "sizes_bf": img.dims.to_tuple(),  # Full BF order
             "dim_order_bf": str(img.dims.order),
             "axes_czifile": "STCYX0",  # From czifile if needed
             "shape_czifile": img.data.shape,
-            "czi_is_rgb": img.is_RGB,
-            "czi_is_mosaic": img.is_mosaic,
-            "obj_na": img.physical_pixel_sizes.X,  # Or from metadata
-            "obj_mag": 10.0,  # Parse from metadata['Objective']
-            "obj_id": img.metadata.get("Objective ID", "Unknown"),
-            "obj_name": img.metadata.get("Objective Name", ["Unknown"]),
+            #"czi_is_mosaic": img.is_mosaic,
+            #"obj_na": img.physical_pixel_sizes.X,  # Or from metadata
+            #"obj_mag": 10.0,  # Parse from metadata['Objective']
+            #"obj_id": img.metadata.get("Objective ID", "Unknown"),
+            #"obj_name": img.metadata.get("Objective Name", ["Unknown"]),
         }
         return metadata
 

@@ -1,6 +1,7 @@
 # src/napari_plate_navigator/_widget.py
 import logging
 import os
+import pandas as pd
 from pathlib import Path
 
 import napari  # Import for proper Viewer annotation
@@ -45,6 +46,7 @@ class NavigationWidget(QWidget):
         layout = QVBoxLayout()
         self.well_label = QLabel("Well")
         self.well_combo = QComboBox()
+        self.well_combo.currentTextChanged.connect(self.update_sites_for_well)
         self.well_combo.currentTextChanged.connect(self.update_image)
         self.site_label = QLabel("Site")
         self.site_combo = QComboBox()
@@ -59,13 +61,40 @@ class NavigationWidget(QWidget):
 
     def update_wells(self, wells: list[str]):
         self.wells = sorted(wells)
+        self.well_combo.blockSignals(True)
         self.well_combo.clear()
         self.well_combo.addItems(self.wells)
+        self.well_combo.blockSignals(False)
+        if self.wells:  # Auto-select first well and update sites
+            self.well_combo.setCurrentIndex(0)
+            self.update_sites_for_well(self.wells[0])  # Trigger initial sites
+            
+    def update_sites_for_well(self, well_name: str):
+        """Filter sites for selected well from state.df_images (or well_df)."""
+        if well_name not in self.wells:
+            return
+        # General case: Filter from df_images (has WELL/SITE)
+        site_df = self.state.df_images[self.state.df_images[WELL] == well_name]
+        unique_sites = sorted(site_df[SITE].unique())
+        self.sites = [str(s) for s in unique_sites]
+        self.site_combo.clear()
+        if self.sites:
+            self.site_combo.blockSignals(True)
+            self.site_combo.addItems(self.sites)
+            # Auto-select first site if available
+            self.site_combo.setCurrentIndex(0)
+            self.site_combo.blockSignals(False)
+            # Trigger image update
+            #self.update_image()
+        else:
+            self.site_combo.addItem("No sites")  # Placeholder
 
     def update_sites(self, sites: list[int]):
         self.sites = [str(s) for s in sorted(sites)]
+        self.site_combo.blockSignals(True)
         self.site_combo.clear()
         self.site_combo.addItems(self.sites)
+        self.site_combo.blockSignals(False)
 
     @log_method
     def update_image(
@@ -78,9 +107,10 @@ class NavigationWidget(QWidget):
         if not (well and site):
             self.logger.info("well or site missing")
         else:
-            self.logger.debug(
-                "plate.nwells before clear: %s", self.state.plate.nwells()
-            )
+            if self.state.plate:
+                self.logger.debug(
+                    "plate.nwells before clear: %s", self.state.plate.nwells()
+                )
             self.viewer.layers.clear()
             site_obj = self.state.plate.get_well_site(well, site)
             # site_obj.debug()
@@ -88,12 +118,26 @@ class NavigationWidget(QWidget):
 
             # Add images, then restore visibility
             for _img_name, img in site_obj.get_images().items():
-                # Generate generic channel names based on number of channels (assuming channel dim at index -3)
+                dims_tuple = ('T','Z','C','Y','X')
+                if hasattr(img, "dims"):
+                    dims_tuple = img.dims
+
+                # Find 'C' position (e.g., 2 in ('I', 'T', 'C', 'Z', 'Y', 'X'))
+                try:
+                    channel_pos = dims_tuple.index('C')
+                    # Channel axis for Napari (from end: - (len - pos))
+                    channel_axis = - (len(dims_tuple) - channel_pos)
+                except ValueError:
+                    channel_axis = -3  # Fallback for standard TZYXC
+                    logger.warning("No 'C' in dims %s; using default -3",
+                                   str(dims_tuple))
+
+                # Generate generic channel names based on number of channels
                 self.logger.debug("%s %s", _img_name, img.shape)
-                num_channels = img.shape[-3]
+                num_channels = img.shape[channel_axis]
                 channel_names = [f"Ch{i+1}" for i in range(num_channels)]
                 added_layers = self.viewer.add_image(
-                    img, channel_axis=-3, name=channel_names
+                    img, channel_axis=channel_axis, name=channel_names
                 )
                 # added_layers is always a list of Image layers when names is a list
                 for added_layer in added_layers:
@@ -197,10 +241,8 @@ def make_qwidget() -> NavigationWidget:
         print("*****")
 
         try:
-            wells_list = list(state.df_images[WELL].unique())
-            sites_list = list(state.df_images[SITE].unique())
+            wells_list = sorted(state.df_images[WELL].unique())
             navigate_widget.update_wells(wells_list)
-            navigate_widget.update_sites(sites_list)
         except KeyError:
             # stop here if state df doesn't have WELL column
             return
