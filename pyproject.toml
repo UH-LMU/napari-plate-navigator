@@ -47,6 +47,7 @@ testing = [
     "pytest-qt",  # https://pytest-qt.readthedocs.io/en/latest/
     "napari[qt]",  # test with napari's default Qt bindings
 ]
+analysis = ["cztile"]
 
 [project.entry-points."napari.manifest"]
 napari-plate-navigator = "napari_plate_navigator:napari.yaml"
@@ -149,5 +150,10 @@ napari-plate-navigator = { path = ".", editable = true }
 default = { solve-group = "default" }
 all = { features = ["all"], solve-group = "default" }
 testing = { features = ["testing"], solve-group = "default" }
+analysis = { features = ["analysis"], solve-group = "default" }
 
 [tool.pixi.tasks]
+
+[tool.pixi.feature.analysis.dependencies]
+scikit-image = ">=0.25.2,<0.26"
+matplotlib = ">=3.10.7,<4"
