@@ -3,6 +3,7 @@ import logging
 import os
 from collections import defaultdict
 from pathlib import Path
+import re
 from typing import Any
 
 import dask.array as da
@@ -349,6 +350,53 @@ def build_well_df(row, col, idx):
     return df
 
 
+class SiteTiffLoader(BaseLoader):
+    def can_read(self, path: Path) -> bool:
+        filepattern = r"well_(.*)_site_(\d\d\d).*tif$"
+        return re.search(filepattern, path.name) != None
+
+    @log_method
+    def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
+        logger.debug(files[0].name)
+        df = pd.DataFrame({PATH: [str(f) for f in files]})
+        # Extract from filename only (not full path)
+        df['filename'] = df[PATH].apply(lambda x: Path(x).name)
+        metadata_columns = {
+            "mc1": WELL,
+            "mc2": SITE,
+        }
+        pattern = (
+            r"well_(?P<{mc1}>row\d*col\d*)_site_(?P<{mc2}>\d{{3}})_.*\.tif"
+        ).format(**metadata_columns)
+        extracted = df['filename'].str.extract(pattern)
+        #df = df.drop(columns=['filename']).join(extracted)  # Drop temp column
+        df = df.join(extracted)  # Drop temp column
+        logger.debug(df)
+
+        df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
+        df[WELL] = df[WELL].astype(str)
+        df[SITE] = df[SITE].astype(int)
+        df[PLATE] = "dummy_plate_name"
+        df[CHANNEL] = 0
+        df[TSTEP] = 0
+        df[ZSTEP] = 0
+
+        df.sort_values(
+            by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
+            inplace=True,
+            ignore_index=True,
+        )
+        return df
+    
+    @log_method
+    def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
+        """Single file: whole site in one .tiff"""
+        filename = site_group[PATH].values[0]
+        img = BioImage(path)
+        return img.get_xarray_dask_stack()
+
+   
+
 class CziLoader(BaseLoader):
     """Loader for Zeiss CZI files (monolithic or multi-scene)."""
 
@@ -459,6 +507,7 @@ def get_loader(path: Path) -> BaseLoader:
     loaders = {
         "czi": CziLoader(),
         "imagexpress": ImageXpressLoader(),
+        "sitetiff": SiteTiffLoader(),
         "phenix": PhenixLoader(),
         #"tif": TiffLoader(),
     }
@@ -521,6 +570,7 @@ def load_plate(
         loader_map = {
             "imagexpress": ImageXpressLoader(),
             "phenix": PhenixLoader(),
+            "sitetiff": SiteTiffLoader(),
             "czi": CziLoader(),
             "generic": TiffLoader(),
         }
