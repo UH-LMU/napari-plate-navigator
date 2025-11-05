@@ -31,6 +31,10 @@ if TESTING:
     default_label_path = Path(f"/home/{user}/data/yu/stardist/visit20251007")
     # Phenix example
     default_image_path = Path(f"/home/{user}/data/connexin")
+    # CZI example
+    default_image_path = Path(f"/home/{user}/data")
+    default_label_path = Path(f"/home/{user}/data/andrea")
+    
 else:
     default_image_path = get_mount_path() / "instruments/Micro" / "project1"
     default_label_path = get_mount_path() / "airflow/micro" / "project1"
@@ -133,7 +137,9 @@ class NavigationWidget(QWidget):
                                    str(dims_tuple))
 
                 # Generate generic channel names based on number of channels
-                self.logger.debug("%s %s", _img_name, img.shape)
+                if hasattr(img, "dims"):
+                    self.logger.debug("dims %s %s", _img_name, img.dims)
+                self.logger.debug("shape %s %s", _img_name, img.shape)
                 num_channels = img.shape[channel_axis]
                 channel_names = [f"Ch{i+1}" for i in range(num_channels)]
                 added_layers = self.viewer.add_image(
@@ -161,6 +167,9 @@ class NavigationWidget(QWidget):
 
             # Add labels, restore visibility
             for lbl_name, lbl in site_obj.get_labels().items():
+                if hasattr(lbl, "dims"):
+                    self.logger.debug("dims %s %s", lbl_name, lbl.dims)
+                self.logger.debug("shape %s %s", lbl_name, lbl.shape)
                 added_layer = self.viewer.add_labels(lbl, name=lbl_name)
                 added_layer.visible = self.state.get_layer_visibility(
                     lbl_name, is_label=True

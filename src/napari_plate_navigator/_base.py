@@ -63,17 +63,18 @@ class Site:
 
     def build_on_demand(self):
         """Lazy build on demand."""
-        loader = StateManager.get_instance().loader
+        loader_img = StateManager.get_instance().loader_img
+        loader_lbl = StateManager.get_instance().loader_lbl
 
         for key, df in self.filelists_img.items():
             if df.empty or key in self.images:
                 continue
-            self.images[key] = loader.build_site_array(df)
+            self.images[key] = loader_img.build_site_array(df)
 
         for key, df in self.filelists_lbl.items():
             if df.empty or key in self.labels:
                 continue
-            self.labels[key] = loader.build_site_array(df)
+            self.labels[key] = loader_lbl.build_site_array(df)
 
     def debug(self):
         print(f"SITE {self.name}")
@@ -171,7 +172,8 @@ class StateManager:
         )  # e.g., {'Ch1': (0.0, 255.0)}
         self.saved_t: int = 0  # Selected time step
         self.saved_z: int = 0  # Selected Z slice
-        self.loader = None
+        self.loader_img = None
+        self.loader_lbl = None
         self.czi = None
         self._initialized = True
 
@@ -221,7 +223,8 @@ class StateManager:
         self.channel_vis.clear()
         self.label_vis.clear()
         self.channel_contrast.clear()
-        self.loader = None
+        self.loader_img = None
+        self.loader_lbl = None
 
 
 # Optional: Expose key bits for widget

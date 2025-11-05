@@ -392,10 +392,19 @@ class SiteTiffLoader(BaseLoader):
     def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
         """Single file: whole site in one .tiff"""
         filename = site_group[PATH].values[0]
-        img = BioImage(path)
-        return img.get_xarray_dask_stack()
+        logger.debug(filename)
+        img = BioImage(filename)
+        logger.debug("img.dims %s", img.dims)
+        logger.debug("img.shape %s", img.shape)
+        logger.debug("img.channel_names %s", img.channel_names)
+        logger.debug("img.ome_metadata %s", img.ome_metadata)
 
-   
+        #dd = img.get_image_dask_data()
+        xr = img.get_xarray_dask_stack()#.isel(I=0)
+        logger.debug("xr.dims %s", xr.dims)
+        logger.debug("xr.shape %s", xr.shape)
+
+        return xr
 
 class CziLoader(BaseLoader):
     """Loader for Zeiss CZI files (monolithic or multi-scene)."""
@@ -450,9 +459,11 @@ class CziLoader(BaseLoader):
         
         # use img stored in state
         img = StateManager.get_instance().czi
+        xr = img.get_xarray_dask_stack(select_scenes=(site,))
+        logger.debug("xr.dims %s", xr.dims)
+        logger.debug("xr.shape %s", xr.shape)
 
-        return img.get_xarray_dask_stack(select_scenes=(site,))
-        
+        return xr
         
     def get_extra_metadata(self, path: Path) -> dict[str, Any]:
         img = BioImage(str(path), reader=bioio_czi.Reader)
@@ -624,7 +635,9 @@ def load_plate(
         state.plate = Plate()
         state.df_images = df
         state.metadata = metadata
-        state.loader = loader
+        state.loader_img = loader
+    elif iol == "label":
+        state.loader_lbl = loader
 
     logger.debug("name %s", name)
 
