@@ -1,4 +1,4 @@
-name: napari-lmu-dev
+name: napari-plate-nav-export20251014
 channels:
 - conda-forge
 dependencies:
