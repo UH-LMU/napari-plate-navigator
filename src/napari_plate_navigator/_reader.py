@@ -285,7 +285,11 @@ class ImageXpressLoader(TiffLoader):
 class PhenixLoader(TiffLoader):
 
     def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
+        files = [f for f in files if f.suffix.lower() in ['.tif','.tiff']]
+        
         df = pd.DataFrame({PATH: [str(f) for f in files]})
+        print(df.head)
+        
         metadata_columns = {
             "mc1": WELL,
             "mc2": SITE,
@@ -305,16 +309,24 @@ class PhenixLoader(TiffLoader):
         for col in [SITE, CHANNEL, ZSTEP]:
             df[col] = df[col].str.lstrip("0")
 
-        df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
-        df[PLATE] = df[PLATE].astype(str)
-        df[WELL] = df[WELL].astype(str)
-        df[SITE] = df[SITE].astype(int)
-        df[CHANNEL] = df[CHANNEL].astype(int)
-        # df[TSTEP] = df[TSTEP].astype(int)
-        df[ZSTEP] = df[ZSTEP].astype(int)
+        try:
+            df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
+            df[PLATE] = df[PLATE].astype(str)
+            df[WELL] = df[WELL].astype(str)
+            df[SITE] = df[SITE].astype(int)
+            df[CHANNEL] = df[CHANNEL].astype(int)
+            # df[TSTEP] = df[TSTEP].astype(int)
+            df[ZSTEP] = df[ZSTEP].astype(int)
 
-        # fix timestep for now
-        df[TSTEP] = 1
+            # fix timestep for now
+            df[TSTEP] = 1
+        except ValueError as e:
+            logger.error("Failed to convert metadata type %s", e)
+            df.to_csv(
+                f"/home/{os.getenv('USER')}/tmp/phenix_metadata.csv"
+            )
+            raise
+
 
         # df.to_csv(f"/home/{user}/tmp/PhenixLoader.get_metadata.csv")
 
