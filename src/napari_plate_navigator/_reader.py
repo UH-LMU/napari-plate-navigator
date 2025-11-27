@@ -406,6 +406,30 @@ class SiteTiffLoader(BaseLoader):
 
         return xr
 
+class SiteTiffLabelLoader(SiteTiffLoader):
+    @log_method
+    def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
+        """Single file: whole site in one .tiff"""
+        filename = site_group[PATH].values[0]
+        logger.debug(filename)
+        img = BioImage(filename)
+        logger.debug("img.dims %s", img.dims)
+        logger.debug("img.shape %s", img.shape)
+        logger.debug("img.channel_names %s", img.channel_names)
+        logger.debug("img.ome_metadata %s", img.ome_metadata)
+
+        #dd = img.get_image_dask_data()
+        xr = img.get_xarray_dask_stack()#.isel(I=0)
+        logger.debug("xr.dims %s", xr.dims)
+        logger.debug("xr.shape %s", xr.shape)
+
+        # drop C dimension to make label work
+        xr = xr.isel(C=0, drop=True)
+        logger.debug("xr.dims %s", xr.dims)
+        logger.debug("xr.shape %s", xr.shape)
+
+        return xr
+
 class CziLoader(BaseLoader):
     """Loader for Zeiss CZI files (monolithic or multi-scene)."""
 
@@ -518,6 +542,7 @@ def get_loader(path: Path) -> BaseLoader:
     loaders = {
         "czi": CziLoader(),
         "imagexpress": ImageXpressLoader(),
+        "sitetifflabel": SiteTiffLabelLoader(),
         "sitetiff": SiteTiffLoader(),
         "phenix": PhenixLoader(),
         #"tif": TiffLoader(),
@@ -581,6 +606,7 @@ def load_plate(
         loader_map = {
             "imagexpress": ImageXpressLoader(),
             "phenix": PhenixLoader(),
+            "sitetifflabel": SiteTiffLabelLoader(),
             "sitetiff": SiteTiffLoader(),
             "czi": CziLoader(),
             "generic": TiffLoader(),
