@@ -597,7 +597,15 @@ def load_plate(
 
     # Glob all allowed files
     formats = [".czi", ".tif", ".tiff"]
-    files = [p for p in directory.glob("**/*") if p.is_file() and p.suffix in formats]
+
+    files = []
+
+    for root, dirs, filenames in os.walk(directory, followlinks=True):
+        root_path = Path(root)
+        for name in filenames:
+            p = root_path / name
+            if p.suffix.lower() in formats:
+                files.append(p)
 
     if not files:
         logger.error("No files found in directory: %s", directory)
