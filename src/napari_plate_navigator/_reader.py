@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 import dask.array as da
+import numpy as np
 import pandas as pd
 from bioio import BioImage
 import bioio_czi # For explicit CZI support
@@ -120,9 +121,23 @@ class TiffLoader(BaseLoader):
                 channels = [
                     self.load_slice(Path(p)) for p in z_group[PATH]
                 ]  # Full per-file (C=1)
-                z_stack = da.stack(channels, axis=0)  # Stack C
+                try:
+                    z_stack = da.stack(channels, axis=0)  # Stack C
+                except ValueError as ve:
+                    print("Failed to stack channels: " + str(ve))
+                    print(site_group[PATH].values)
+                    # TODO error handling
+                    #return np.ndarray([])
+                    raise
                 z_steps.append(z_stack)
-            t_stack = da.stack(z_steps, axis=0)  # Stack Z
+            try:
+                t_stack = da.stack(z_steps, axis=0)  # Stack Z
+            except ValueError as ve:
+                print("Failed to stack zsteps: " + str(ve))
+                print(site_group[PATH].values)
+                # TODO error handling
+                #return np.ndarray([])
+                raise
             t_steps.append(t_stack)
         return da.stack(t_steps, axis=0)  # Stack T
 
