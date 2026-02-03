@@ -29,6 +29,7 @@ CHANNEL = "Channel"
 TSTEP = "TStep"
 ZSTEP = "ZStep"
 
+user = os.getenv("USER")
 
 class BaseLoader:
     """Abstract base for file loaders."""
@@ -118,6 +119,7 @@ class TiffLoader(BaseLoader):
         for _tstep, t_group in exploded.groupby(TSTEP):
             z_steps = []
             for _zstep, z_group in t_group.groupby(ZSTEP):
+                logger.debug(f"z_group: {[Path(p).name for p in z_group[PATH].values]}")
                 channels = [
                     self.load_slice(Path(p)) for p in z_group[PATH]
                 ]  # Full per-file (C=1)
@@ -302,8 +304,7 @@ class ImageXpressLoader(TiffLoader):
 
 class PhenixLoader(TiffLoader):
 
-    def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
-        df = pd.DataFrame({PATH: [str(f) for f in files]})
+    def __init__(self):
         metadata_columns = {
             "mc1": WELL,
             "mc2": SITE,
@@ -311,36 +312,44 @@ class PhenixLoader(TiffLoader):
             "mc4": CHANNEL,
             "mc5": PLATE,
         }
-        pattern = (
-            r"[/\\](?P<{mc5}>[^/\\]*)"
-            r"[/\\](?P<{mc1}>r\d\dc\d\d)f(?P<{mc2}>\d\d)p(?P<{mc3}>\d\d)"
+        self.file_pattern = (
+            r"(?P<{mc1}>r\d\dc\d\d)f(?P<{mc2}>\d\d)p(?P<{mc3}>\d\d)"
             r"-ch(?P<{mc4}>\d)"
         ).format(**metadata_columns)
-        extracted = df[PATH].str.extract(pattern)
-        df = df.join(extracted)
 
-        # remove leading zeros
-        for col in [SITE, CHANNEL, ZSTEP]:
-            df[col] = df[col].str.lstrip("0")
+    def can_read(self, path: Path) -> bool:
+        logger.debug(self.file_pattern)
+        logger.debug(str(path))
+        return re.search(self.file_pattern, path.name) != None
+
+    def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
+        df = pd.DataFrame({PATH: [str(f) for f in files]})
+        df.drop_duplicates(inplace=True)
+        logger.debug(f"phxldr: df.shape {df.shape}")
+        extracted = df[PATH].str.extract(self.file_pattern)
+        logger.debug(f"phxldr: extracted.shape {extracted.shape}")
+        df = df.join(extracted)
+        logger.debug(f"phxldr: df.shape {df.shape}")
 
         df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
-        df[PLATE] = df[PLATE].astype(str)
+        df[PLATE] = "plate"
         df[WELL] = df[WELL].astype(str)
-        df[SITE] = df[SITE].astype(int)
-        df[CHANNEL] = df[CHANNEL].astype(int)
-        # df[TSTEP] = df[TSTEP].astype(int)
-        df[ZSTEP] = df[ZSTEP].astype(int)
+
+        for col in [CHANNEL, SITE, ZSTEP]:
+            # remove first leading zero? apparently not needed.
+            df[col] = df[col].str.replace(r'^0', '')
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
         # fix timestep for now
         df[TSTEP] = 1
-
-        # df.to_csv(f"/home/{user}/tmp/PhenixLoader.get_metadata.csv")
 
         df.sort_values(
             by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
             inplace=True,
             ignore_index=True,
         )
+        #df.to_csv(f"/home/{user}/tmp/PhenixLoader.get_metadata.csv")
+
         return df
 
 
