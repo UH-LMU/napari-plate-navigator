@@ -605,7 +605,7 @@ def load_plate(
         }
 
     # Glob all allowed files
-    formats = [".czi", ".tif", ".tiff"]
+    formats = [".czi", ".png", ".tif", ".tiff"]
 
     files = []
 
