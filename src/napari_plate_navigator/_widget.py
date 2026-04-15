@@ -34,6 +34,9 @@ if TESTING:
     # CZI example
     default_image_path = Path(f"/home/{user}/data")
     default_label_path = Path(f"/home/{user}/data/andrea")
+    # Nextflow testing
+    default_image_path = Path(f"/DISKS/2TB/{user}/data/connexin/nextflow_pub")
+    default_label_path = Path(f"/DISKS/2TB/{user}/data/connexin/nextflow_pub")
     
 else:
     default_image_path = get_mount_path() / "instruments/Micro" / "project1"
