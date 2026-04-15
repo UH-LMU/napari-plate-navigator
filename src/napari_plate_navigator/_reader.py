@@ -1,17 +1,13 @@
 # src/napari_plate_navigator/_reader.py
 import logging
 import os
-from collections import defaultdict
 from pathlib import Path
-import re
 from typing import Any
 
 import dask.array as da
-import numpy as np
 import pandas as pd
-from bioio import BioImage
-import bioio_czi # For explicit CZI support
-from czitools.metadata_tools.czi_metadata import CziMetadata
+from aicsimageio import AICSImage
+from aicsimageio.readers import CziReader  # For explicit CZI support
 from tqdm import tqdm
 
 from ._base import Plate, StateManager
@@ -29,7 +25,6 @@ CHANNEL = "Channel"
 TSTEP = "TStep"
 ZSTEP = "ZStep"
 
-user = os.getenv("USER")
 
 class BaseLoader:
     """Abstract base for file loaders."""
@@ -100,8 +95,8 @@ class TiffLoader(BaseLoader):
     def load_slice(
         self, path: Path, t: int = None, z: int = None, c: int = None
     ) -> da.Array:
-        img = BioImage(str(path))
-        # Lazy slice via BioImage params (works for embedded dims or single)
+        img = AICSImage(str(path))
+        # Lazy slice via AICSImage params (works for embedded dims or single)
         scene_kwargs = {}
         if t is not None:
             scene_kwargs["T"] = t
@@ -119,27 +114,12 @@ class TiffLoader(BaseLoader):
         for _tstep, t_group in exploded.groupby(TSTEP):
             z_steps = []
             for _zstep, z_group in t_group.groupby(ZSTEP):
-                logger.debug(f"z_group: {[Path(p).name for p in z_group[PATH].values]}")
                 channels = [
                     self.load_slice(Path(p)) for p in z_group[PATH]
                 ]  # Full per-file (C=1)
-                try:
-                    z_stack = da.stack(channels, axis=0)  # Stack C
-                except ValueError as ve:
-                    print("Failed to stack channels: " + str(ve))
-                    print(site_group[PATH].values)
-                    # TODO error handling
-                    #return np.ndarray([])
-                    raise
+                z_stack = da.stack(channels, axis=0)  # Stack C
                 z_steps.append(z_stack)
-            try:
-                t_stack = da.stack(z_steps, axis=0)  # Stack Z
-            except ValueError as ve:
-                print("Failed to stack zsteps: " + str(ve))
-                print(site_group[PATH].values)
-                # TODO error handling
-                #return np.ndarray([])
-                raise
+            t_stack = da.stack(z_steps, axis=0)  # Stack Z
             t_steps.append(t_stack)
         return da.stack(t_steps, axis=0)  # Stack T
 
@@ -304,7 +284,12 @@ class ImageXpressLoader(TiffLoader):
 
 class PhenixLoader(TiffLoader):
 
-    def __init__(self):
+    def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
+        files = [f for f in files if f.suffix.lower() in ['.tif','.tiff']]
+        
+        df = pd.DataFrame({PATH: [str(f) for f in files]})
+        print(df.head)
+        
         metadata_columns = {
             "mc1": WELL,
             "mc2": SITE,
@@ -312,98 +297,38 @@ class PhenixLoader(TiffLoader):
             "mc4": CHANNEL,
             "mc5": PLATE,
         }
-        self.file_pattern = (
-            r"(?P<{mc1}>r\d\dc\d\d)f(?P<{mc2}>\d\d)p(?P<{mc3}>\d\d)"
+        pattern = (
+            r"[/\\](?P<{mc5}>[^/\\]*)"
+            r"[/\\](?P<{mc1}>r\d\dc\d\d)f(?P<{mc2}>\d\d)p(?P<{mc3}>\d\d)"
             r"-ch(?P<{mc4}>\d)"
         ).format(**metadata_columns)
-
-    def can_read(self, path: Path) -> bool:
-        logger.debug(self.file_pattern)
-        logger.debug(str(path))
-        return re.search(self.file_pattern, path.name) != None
-
-    def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
-        df = pd.DataFrame({PATH: [str(f) for f in files]})
-        df.drop_duplicates(inplace=True)
-        logger.debug(f"phxldr: df.shape {df.shape}")
-        extracted = df[PATH].str.extract(self.file_pattern)
-        logger.debug(f"phxldr: extracted.shape {extracted.shape}")
+        extracted = df[PATH].str.extract(pattern)
         df = df.join(extracted)
-        logger.debug(f"phxldr: df.shape {df.shape}")
 
-        df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
-        df[PLATE] = "plate"
-        df[WELL] = df[WELL].astype(str)
+        # remove leading zeros
+        for col in [SITE, CHANNEL, ZSTEP]:
+            df[col] = df[col].str.lstrip("0")
 
-        for col in [CHANNEL, SITE, ZSTEP]:
-            # remove first leading zero? apparently not needed.
-            df[col] = df[col].str.replace(r'^0', '')
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        try:
+            df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
+            df[PLATE] = df[PLATE].astype(str)
+            df[WELL] = df[WELL].astype(str)
+            df[SITE] = df[SITE].astype(int)
+            df[CHANNEL] = df[CHANNEL].astype(int)
+            # df[TSTEP] = df[TSTEP].astype(int)
+            df[ZSTEP] = df[ZSTEP].astype(int)
 
-        # fix timestep for now
-        df[TSTEP] = 1
-
-        df.sort_values(
-            by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
-            inplace=True,
-            ignore_index=True,
-        )
-        #df.to_csv(f"/home/{user}/tmp/PhenixLoader.get_metadata.csv")
-
-        return df
-
-
-def build_well_df(row, col, idx):
-    """
-    Build a DataFrame from row/col/site arrays, with 'Well' derived for grouping.
-    
-    Args:
-        row: List-like of row indices (e.g., [1, 1, 2, 2])
-        col: List-like of col indices (e.g., [1, 2, 1, 2])
-        idx: List-like of site indices (e.g., [1, 2, 3, 4])
-    
-    Returns:
-        pd.DataFrame with columns ['Row', 'Col', 'Site', 'Well']
-    """
-    df = pd.DataFrame({
-        'Row': row,
-        'Col': col,
-        'Site': idx
-    })
-    df['Well'] = 'row' + df['Row'].astype(str) + 'col' + df['Col'].astype(str)
-    return df
+            # fix timestep for now
+            df[TSTEP] = 1
+        except ValueError as e:
+            logger.error("Failed to convert metadata type %s", e)
+            df.to_csv(
+                f"/home/{os.getenv('USER')}/tmp/phenix_metadata.csv"
+            )
+            raise
 
 
-class SiteTiffLoader(BaseLoader):
-    def can_read(self, path: Path) -> bool:
-        filepattern = r"well_(.*)_site_(\d\d\d).*tif$"
-        return re.search(filepattern, path.name) != None
-
-    @log_method
-    def discover_metadata(self, files: list[Path]) -> pd.DataFrame:
-        logger.debug(files[0].name)
-        df = pd.DataFrame({PATH: [str(f) for f in files]})
-        # Extract from filename only (not full path)
-        df['filename'] = df[PATH].apply(lambda x: Path(x).name)
-        metadata_columns = {
-            "mc1": WELL,
-            "mc2": SITE,
-        }
-        pattern = (
-            r"well_(?P<{mc1}>row\d*col\d*)_site_(?P<{mc2}>\d{{3}})_.*\.tif"
-        ).format(**metadata_columns)
-        extracted = df['filename'].str.extract(pattern)
-        #df = df.drop(columns=['filename']).join(extracted)  # Drop temp column
-        df = df.join(extracted)  # Drop temp column
-        logger.debug(df)
-
-        df[DIR] = df[PATH].apply(lambda x: str(Path(x).parent))
-        df[WELL] = df[WELL].astype(str)
-        df[SITE] = df[SITE].astype(int)
-        df[PLATE] = "dummy_plate_name"
-        df[CHANNEL] = 0
-        df[TSTEP] = 0
-        df[ZSTEP] = 0
+        # df.to_csv(f"/home/{user}/tmp/PhenixLoader.get_metadata.csv")
 
         df.sort_values(
             by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
@@ -411,48 +336,7 @@ class SiteTiffLoader(BaseLoader):
             ignore_index=True,
         )
         return df
-    
-    @log_method
-    def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
-        """Single file: whole site in one .tiff"""
-        filename = site_group[PATH].values[0]
-        logger.debug(filename)
-        img = BioImage(filename)
-        logger.debug("img.dims %s", img.dims)
-        logger.debug("img.shape %s", img.shape)
-        logger.debug("img.channel_names %s", img.channel_names)
-        logger.debug("img.ome_metadata %s", img.ome_metadata)
 
-        #dd = img.get_image_dask_data()
-        xr = img.get_xarray_dask_stack()#.isel(I=0)
-        logger.debug("xr.dims %s", xr.dims)
-        logger.debug("xr.shape %s", xr.shape)
-
-        return xr
-
-class SiteTiffLabelLoader(SiteTiffLoader):
-    @log_method
-    def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
-        """Single file: whole site in one .tiff"""
-        filename = site_group[PATH].values[0]
-        logger.debug(filename)
-        img = BioImage(filename)
-        logger.debug("img.dims %s", img.dims)
-        logger.debug("img.shape %s", img.shape)
-        logger.debug("img.channel_names %s", img.channel_names)
-        logger.debug("img.ome_metadata %s", img.ome_metadata)
-
-        #dd = img.get_image_dask_data()
-        xr = img.get_xarray_dask_stack()#.isel(I=0)
-        logger.debug("xr.dims %s", xr.dims)
-        logger.debug("xr.shape %s", xr.shape)
-
-        # drop C dimension to make label work
-        xr = xr.isel(C=0, drop=True)
-        logger.debug("xr.dims %s", xr.dims)
-        logger.debug("xr.shape %s", xr.shape)
-
-        return xr
 
 class CziLoader(BaseLoader):
     """Loader for Zeiss CZI files (monolithic or multi-scene)."""
@@ -464,57 +348,62 @@ class CziLoader(BaseLoader):
         """Parse filename for WELL/SITE/PLATE, embedded for T/Z/C."""
         if not files:
             return pd.DataFrame()
-
-        # exclude thumbnail images
-        files = [f for f in files if f.suffix.lower() == ".czi"]
-
         path = files[0]  # Assume single file for now; extend for multi later
+        img = AICSImage(str(path), reader=CziReader)
 
-        # reconstructing mosaic will take ages, skip
-        img = BioImage(str(path),
-                       reconstruct_mosaic=False,
-                       reader=bioio_czi.Reader)
+        # Filename parsing (e.g., "Plate1_WellA1_Site1_TimeSeries.czi")
+        name = path.stem
+        import re
 
-        # store xarray in state
-        StateManager.get_instance().czi = img
+        plate_match = re.search(r"Plate(?P<plate>\d+)", name)
+        well_match = re.search(r"Well(?P<well>[A-P]\d{1,2})", name)
+        site_match = re.search(r"Site(?P<site>\d+)", name)
 
-        # TODO: use czitools to read metadata
-        md = CziMetadata(str(path))
-        row_id = md.sample.well_rowID
-        col_id = md.sample.well_colID
-        scene_id = md.sample.well_indices
-        assert len(row_id) == len(col_id)
-        assert len(col_id) == len(scene_id)
+        # Embedded dims (AICSImage exposes T/Z/C counts)
+        t_max = img.dims.T if img.dims.T > 1 else 1
+        z_max = img.dims.Z if img.dims.Z > 1 else 1
+        c_max = img.dims.C
 
-        # construct dataframe the holds the well/site combinations
-        df = build_well_df(row_id, col_id, scene_id)
-
-        # fill in other columns with dummy values
-        df[PATH] = str(path)
-        df[PLATE] = 'dummy_plate_name'
-        df[CHANNEL] = 0
-        df[TSTEP] = 0
-        df[ZSTEP] = 0
-        
+        # Build df with cartesian product for T/Z/C
+        rows = []
+        for t in range(t_max):
+            for z in range(z_max):
+                for c in range(c_max):
+                    row = {
+                        PATH: str(path),
+                        PLATE: (
+                            plate_match.group("plate") if plate_match else "1"
+                        ),
+                        WELL: well_match.group("well") if well_match else "A1",
+                        SITE: (
+                            int(site_match.group("site")) if site_match else 1
+                        ),
+                        TSTEP: t,
+                        ZSTEP: z,
+                        CHANNEL: c,
+                        DIR: str(path.parent),
+                    }
+                    rows.append(row)
+        df = pd.DataFrame(rows)
+        df = df.astype(
+            {
+                PLATE: str,
+                WELL: str,
+                SITE: int,
+                TSTEP: int,
+                ZSTEP: int,
+                CHANNEL: str,
+            }
+        )
+        df.sort_values(
+            by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL],
+            inplace=True,
+            ignore_index=True,
+        )
         return df
 
-    @log_method
-    def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
-        logger.debug(site_group[[WELL,SITE]])
-        # convert to int for get_xarray_dask_stack()
-        site = int(site_group[SITE].values[0])
-        logger.debug("site %s", site)
-        
-        # use img stored in state
-        img = StateManager.get_instance().czi
-        xr = img.get_xarray_dask_stack(select_scenes=(site,))
-        logger.debug("xr.dims %s", xr.dims)
-        logger.debug("xr.shape %s", xr.shape)
-
-        return xr
-        
     def get_extra_metadata(self, path: Path) -> dict[str, Any]:
-        img = BioImage(str(path), reader=bioio_czi.Reader)
+        img = AICSImage(str(path), reader=CziReader)
         # Extract your example fields (extend as needed)
         metadata = {
             "filename": path.name,
@@ -534,22 +423,24 @@ class CziLoader(BaseLoader):
             "size_s": img.dims.S if hasattr(img.dims, "S") else 1,
             "size_b": img.dims.B if hasattr(img.dims, "B") else 1,
             "size_m": img.dims.M if hasattr(img.dims, "M") else 1,
+            "sizes_bf": img.dims.to_tuple(),  # Full BF order
             "dim_order_bf": str(img.dims.order),
             "axes_czifile": "STCYX0",  # From czifile if needed
             "shape_czifile": img.data.shape,
-            #"czi_is_mosaic": img.is_mosaic,
-            #"obj_na": img.physical_pixel_sizes.X,  # Or from metadata
-            #"obj_mag": 10.0,  # Parse from metadata['Objective']
-            #"obj_id": img.metadata.get("Objective ID", "Unknown"),
-            #"obj_name": img.metadata.get("Objective Name", ["Unknown"]),
+            "czi_is_rgb": img.is_RGB,
+            "czi_is_mosaic": img.is_mosaic,
+            "obj_na": img.physical_pixel_sizes.X,  # Or from metadata
+            "obj_mag": 10.0,  # Parse from metadata['Objective']
+            "obj_id": img.metadata.get("Objective ID", "Unknown"),
+            "obj_name": img.metadata.get("Objective Name", ["Unknown"]),
         }
         return metadata
 
     def load_slice(
         self, path: Path, t: int = None, z: int = None, c: int = None
     ) -> da.Array:
-        img = BioImage(str(path), reader=bioio_czi.Reader)
-        # Lazy slice via BioImage params
+        img = AICSImage(str(path), reader=CziReader)
+        # Lazy slice via AICSImage params
         scene_kwargs = {}
         if t is not None:
             scene_kwargs["T"] = t
@@ -566,10 +457,8 @@ def get_loader(path: Path) -> BaseLoader:
     loaders = {
         "czi": CziLoader(),
         "imagexpress": ImageXpressLoader(),
-        "sitetifflabel": SiteTiffLabelLoader(),
-        "sitetiff": SiteTiffLoader(),
         "phenix": PhenixLoader(),
-        #"tif": TiffLoader(),
+        "tif": TiffLoader(),
     }
     for key in loaders:
         loader = loaders[key]
@@ -604,17 +493,8 @@ def load_plate(
             "aux_data": {},
         }
 
-    # Glob all allowed files
-    formats = [".czi", ".png", ".tif", ".tiff"]
-
-    files = []
-
-    for root, dirs, filenames in os.walk(directory, followlinks=True):
-        root_path = Path(root)
-        for name in filenames:
-            p = root_path / name
-            if p.suffix.lower() in formats:
-                files.append(p)
+    # Glob all files
+    files = [p for p in directory.glob("**/*") if p.is_file()]
 
     if not files:
         logger.error("No files found in directory: %s", directory)
@@ -638,8 +518,6 @@ def load_plate(
         loader_map = {
             "imagexpress": ImageXpressLoader(),
             "phenix": PhenixLoader(),
-            "sitetifflabel": SiteTiffLabelLoader(),
-            "sitetiff": SiteTiffLoader(),
             "czi": CziLoader(),
             "generic": TiffLoader(),
         }
@@ -693,9 +571,7 @@ def load_plate(
         state.plate = Plate()
         state.df_images = df
         state.metadata = metadata
-        state.loader_img = loader
-    elif iol == "label":
-        state.loader_lbl = loader
+        state.loader = loader
 
     logger.debug("name %s", name)
 
