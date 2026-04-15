@@ -1,28 +1,33 @@
 """
 Test fixtures for napari-plate-navigator.
 
-Test data is never stored in git. Provide it via:
-  - --data-dir <path>      pytest CLI option
-  - TEST_DATA_DIR=<path>   environment variable
-  - TEST_DATA_URL=<url>    HTTP/S3 URL; files are downloaded to a local cache
+Test data is never stored in git. Provide it via one of:
 
-Expected directory layout under the data root:
-  imagexpress/
+  Unified root (expects subdirs imagexpress/, phenix/, czi/, sitetiff/, sitetiff_labels/):
+    --data-dir <path>          pytest CLI option
+    TEST_DATA_DIR=<path>       environment variable
+    TEST_DATA_URL=<url>        HTTP URL; files listed in a manifest are downloaded
+
+  Per-format overrides (take precedence over the unified root):
+    --imagexpress-dir / TEST_DATA_IMAGEXPRESS
+    --phenix-dir      / TEST_DATA_PHENIX
+    --phenix-labels-dir / TEST_DATA_PHENIX_LABELS
+    --czi-dir         / TEST_DATA_CZI
+    --sitetiff-dir    / TEST_DATA_SITETIFF
+    --sitetiff-labels-dir / TEST_DATA_SITETIFF_LABELS
+
+Expected directory layout for imagexpress:
+  <dir>/
       <plate>/
           t001_A01_s01_w1_z001.tif
           ...
-  phenix/
-      <measurement>/
-          r01c01f01p01-ch1sk1fk1fl1.tif
-          ...
-  czi/
-      <experiment>.czi
-  sitetiff/
-      well_row1col1_site_001_DAPI.tif
-      ...
-  sitetiff_labels/
-      well_row1col1_site_001_labels.tif
-      ...
+
+Expected directory layout for phenix images and labels:
+  <dir>/
+      <well>/               (e.g. r04c07/)
+          <subdir>/         (e.g. projs/ or masks/)
+              r04c07f01p00-ch1sk1fk1fl1_zmean.tiff
+              ...
 """
 
 import os
@@ -43,6 +48,12 @@ def pytest_addoption(parser):
         default=None,
         help="Path to local test data root directory.",
     )
+    parser.addoption("--imagexpress-dir", action="store", default=None)
+    parser.addoption("--phenix-dir", action="store", default=None)
+    parser.addoption("--phenix-labels-dir", action="store", default=None)
+    parser.addoption("--czi-dir", action="store", default=None)
+    parser.addoption("--sitetiff-dir", action="store", default=None)
+    parser.addoption("--sitetiff-labels-dir", action="store", default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -138,29 +149,57 @@ def _subdir(data_dir, name):
     return p if p.exists() else None
 
 
-@pytest.fixture(scope="session")
-def imagexpress_dir(data_dir):
-    return _subdir(data_dir, "imagexpress")
+def _resolve_format_dir(request, cli_option, env_var, data_dir, subdir_name):
+    """Resolve a format-specific directory: CLI > env var > data_dir subdir."""
+    cli = request.config.getoption(cli_option)
+    if cli:
+        return Path(cli)
+    env = os.environ.get(env_var)
+    if env:
+        return Path(env)
+    return _subdir(data_dir, subdir_name)
 
 
 @pytest.fixture(scope="session")
-def phenix_dir(data_dir):
-    return _subdir(data_dir, "phenix")
+def imagexpress_dir(request, data_dir):
+    return _resolve_format_dir(
+        request, "--imagexpress-dir", "TEST_DATA_IMAGEXPRESS", data_dir, "imagexpress"
+    )
 
 
 @pytest.fixture(scope="session")
-def czi_dir(data_dir):
-    return _subdir(data_dir, "czi")
+def phenix_dir(request, data_dir):
+    return _resolve_format_dir(
+        request, "--phenix-dir", "TEST_DATA_PHENIX", data_dir, "phenix"
+    )
 
 
 @pytest.fixture(scope="session")
-def sitetiff_dir(data_dir):
-    return _subdir(data_dir, "sitetiff")
+def phenix_labels_dir(request, data_dir):
+    return _resolve_format_dir(
+        request, "--phenix-labels-dir", "TEST_DATA_PHENIX_LABELS", data_dir, "phenix_labels"
+    )
 
 
 @pytest.fixture(scope="session")
-def sitetiff_labels_dir(data_dir):
-    return _subdir(data_dir, "sitetiff_labels")
+def czi_dir(request, data_dir):
+    return _resolve_format_dir(
+        request, "--czi-dir", "TEST_DATA_CZI", data_dir, "czi"
+    )
+
+
+@pytest.fixture(scope="session")
+def sitetiff_dir(request, data_dir):
+    return _resolve_format_dir(
+        request, "--sitetiff-dir", "TEST_DATA_SITETIFF", data_dir, "sitetiff"
+    )
+
+
+@pytest.fixture(scope="session")
+def sitetiff_labels_dir(request, data_dir):
+    return _resolve_format_dir(
+        request, "--sitetiff-labels-dir", "TEST_DATA_SITETIFF_LABELS", data_dir, "sitetiff_labels"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -197,11 +197,13 @@ class ImageXpressLoader(TiffLoader):
     def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
         """Multi-file: Loop T outer, C middle, Z inner. Repeat single-Z channels to full_Z."""
         exploded = site_group.explode([PATH, TSTEP, ZSTEP, CHANNEL])
+        # explode() converts int columns to object dtype when values are scalars
+        for col in [TSTEP, ZSTEP, CHANNEL]:
+            exploded[col] = pd.to_numeric(exploded[col])
 
-        # Find global max Z from channels with stacks (for repetition)
-        full_z = (
-            exploded[exploded[ZSTEP] > 0][ZSTEP].max() + 1
-        )  # e.g., 10 Z slices
+        # Number of Z slices in stack channels (for repeating projections to match).
+        # Count unique values rather than max+1 to handle 1-indexed z-steps.
+        full_z = int(exploded[exploded[ZSTEP] > 0][ZSTEP].nunique())
         logger.debug("full_z %d", full_z)
 
         t_steps = []
