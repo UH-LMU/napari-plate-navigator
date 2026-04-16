@@ -613,8 +613,8 @@ def load_plate(
 
     for root, dirs, filenames in os.walk(directory, followlinks=True):
         root_path = Path(root)
-        for name in filenames:
-            p = root_path / name
+        for filename in filenames:
+            p = root_path / filename
             if p.suffix.lower() in formats:
                 files.append(p)
 

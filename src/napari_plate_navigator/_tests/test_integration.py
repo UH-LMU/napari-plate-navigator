@@ -16,6 +16,12 @@ Or per-format:
 import dask.array as da
 import pytest
 
+try:
+    import xarray as xr
+    _has_xarray = True
+except ImportError:
+    _has_xarray = False
+
 from napari_plate_navigator._reader import load_plate
 
 
@@ -26,6 +32,15 @@ from napari_plate_navigator._reader import load_plate
 def _skip_if_none(path, label):
     if path is None:
         pytest.skip(f"No {label} data provided")
+
+
+def _is_array_like(arr) -> bool:
+    """True for dask arrays and xarray DataArrays (which wrap dask arrays)."""
+    if isinstance(arr, da.Array):
+        return True
+    if _has_xarray and isinstance(arr, xr.DataArray):
+        return True
+    return False
 
 
 def _assert_valid_plate(result):
@@ -39,8 +54,9 @@ def _assert_valid_plate(result):
             images = site.get_images()
             assert len(images) > 0
             for name, arr in images.items():
-                assert isinstance(arr, da.Array), (
-                    f"Expected dask array for {well_name}/{site_name}/{name}"
+                assert _is_array_like(arr), (
+                    f"Expected dask/xarray for {well_name}/{site_name}/{name}, "
+                    f"got {type(arr)}"
                 )
             return  # One site is enough for a smoke test
 
