@@ -13,22 +13,27 @@ Zeiss CellDiscoverer 7 (CZI format). Generic TIFF-per-site also supported.
 
 ## Running tests
 
+Always use `pixi run --environment testing` — plain `pytest` resolves to the system
+Python which has none of the project's packages.
+
 ```bash
-# Unit tests (no data needed, always run)
-pixi run --environment testing pytest src/napari_plate_navigator/_tests/test_loaders_unit.py -v
+# Unit tests (no data needed, always run, ~0.2s)
+pixi run --environment testing test-unit
 
-# Integration tests — provide data via per-format options or env vars
-pixi run --environment testing pytest src/napari_plate_navigator/_tests/test_integration.py -v \
-  --imagexpress-dir ./data/imagexpress \
-  --phenix-dir /path/to/phenix/measurement \
-  --phenix-labels-dir /path/to/cellpose/labels \
-  --czi-dir /path/to/czi/files
+# Per-format integration tests
+pixi run --environment testing test-ix      --imagexpress-dir ./data/imagexpress
+pixi run --environment testing test-phenix  --phenix-dir /DISKS/2TB/.../02-zproj/184_EXP7_P2
+pixi run --environment testing test-czi     --czi-dir /DISKS/1TB/hajaalin/data/parijat/1/
+pixi run --environment testing test-sitetiff  # set TEST_DATA_SITETIFF env var
 
-# Or via environment variables
-TEST_DATA_IMAGEXPRESS=./data/imagexpress \
-TEST_DATA_PHENIX=/path/to/phenix \
-pixi run --environment testing pytest ...
+# Or via environment variables (useful for CI)
+TEST_DATA_PHENIX=/path/to/phenix pixi run --environment testing test-phenix
+
+# Everything
+pixi run --environment testing test
 ```
+
+Note: CZI test takes ~2 minutes (CZI metadata parsing is inherently slow).
 
 ## Git workflow
 
@@ -78,10 +83,14 @@ Key `StateManager` fields: `plate`, `df_images`, `loader_img`, `loader_lbl`, `cz
 - `ImageXpressLoader.build_site_array`: after `DataFrame.explode()`, int columns
   become object dtype — always apply `pd.to_numeric()` afterwards
 - Z-steps in ImageXpress data are 1-indexed; use `nunique()` not `max()+1` for `full_z`
+- `CziLoader.build_site_array` returns `xarray.DataArray` (from `get_xarray_dask_stack()`),
+  not a bare `da.Array` — the widget handles this via `hasattr(img, "dims")` check
 - `SiteTiffLabelLoader.build_site_array` drops C dimension (`.isel(C=0)`) so labels
   have the right shape for Napari
 - Default paths in `_widget.py` are hardcoded for Harri's machines (TESTING=True block)
 - `StateManager` is a singleton — call `state.clear_state()` before loading new images
+- `load_plate` uses `os.walk`; avoid loop variables named `name` as they shadow the
+  `name` function parameter (was a bug, fixed in 43742a8)
 
 ## Test data locations (local, not in git)
 
@@ -98,8 +107,10 @@ The conftest supports `TEST_DATA_URL` for HTTP download via a manifest file.
 
 ## Remaining work
 
-- [ ] Verify CZI loader works end-to-end with parijat data
-- [ ] Test Phenix label loading once cellpose masks finish processing
+- [ ] Test Phenix label loading (cellpose masks may now be ready in `07-cellpose/`)
+- [ ] Test CZI file 2: `/DISKS/1TB/hajaalin/data/parijat/2/`
+- [ ] Prepare SiteTiff test data and run `test-sitetiff`
 - [ ] Clean up repo root: `.gitignore` conda env files, scratch notebooks, backup files
-- [ ] Push branches once SSH keys are available on this machine
+- [ ] Push branches and delete remote `origin/czi1` once SSH keys are available
 - [ ] Decide whether `SiteTiffLoader` label display bug ("labels still show messed up") is fixed
+- [ ] Host test data on Allas CSC for CI (manifest-based HTTP download via `TEST_DATA_URL`)
