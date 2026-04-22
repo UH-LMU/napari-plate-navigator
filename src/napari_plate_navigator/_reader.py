@@ -358,21 +358,13 @@ class PhenixLoader(TiffLoader):
 def build_well_df(row, col, idx):
     """
     Build a DataFrame from row/col/site arrays, with 'Well' derived for grouping.
-    
-    Args:
-        row: List-like of row indices (e.g., [1, 1, 2, 2])
-        col: List-like of col indices (e.g., [1, 2, 1, 2])
-        idx: List-like of site indices (e.g., [1, 2, 3, 4])
-    
-    Returns:
-        pd.DataFrame with columns ['Row', 'Col', 'Site', 'Well']
+
+    Site       — 0-based index within each well (matches segment-czi output filenames).
+    SceneIndex — original CZI scene index from metadata (used for CZI reads).
     """
-    df = pd.DataFrame({
-        'Row': row,
-        'Col': col,
-        'Site': idx
-    })
+    df = pd.DataFrame({'Row': row, 'Col': col, 'SceneIndex': idx})
     df['Well'] = 'row' + df['Row'].astype(str) + 'col' + df['Col'].astype(str)
+    df['Site'] = df.groupby('Well').cumcount()
     return df
 
 
@@ -474,7 +466,7 @@ class CziLoader(BaseLoader):
 
         # reconstructing mosaic will take ages, skip
         img = BioImage(str(path),
-                       reconstruct_mosaic=False,
+                       reconstruct_mosaic=True,
                        reader=bioio_czi.Reader)
 
         # store xarray in state
@@ -503,13 +495,13 @@ class CziLoader(BaseLoader):
     @log_method
     def build_site_array(self, site_group: pd.DataFrame) -> da.Array:
         logger.debug(site_group[[WELL,SITE]])
-        # convert to int for get_xarray_dask_stack()
-        site = int(site_group[SITE].values[0])
-        logger.debug("site %s", site)
-        
+        # SceneIndex is the original CZI scene index; Site is per-well 0-based
+        scene_index = int(site_group['SceneIndex'].values[0])
+        logger.debug("scene_index %s", scene_index)
+
         # use img stored in state
         img = StateManager.get_instance().czi
-        xr = img.get_xarray_dask_stack(select_scenes=(site,))
+        xr = img.get_xarray_dask_stack(select_scenes=(scene_index,))
         logger.debug("xr.dims %s", xr.dims)
         logger.debug("xr.shape %s", xr.shape)
 
