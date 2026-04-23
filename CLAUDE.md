@@ -39,8 +39,9 @@ Note: CZI test takes ~2 minutes (CZI metadata parsing is inherently slow).
 
 - Pre-commit hooks are active (ruff, black, end-of-file-fixer, napari-plugin-checks). Run
   `pixi run --environment testing lint` before committing. Do NOT use `--no-verify`.
-- Active branches: `main` (canonical) and `phenix` (kept in sync with main)
-- Remote branches `origin/czi1`, `origin/phenix`, `origin/main` exist; push when keys available
+- Single active branch: `main`. Use short-lived feature branches for new work, merge to `main` when ready.
+- Remote branches `origin/czi1`, `origin/phenix`, `origin/main` not yet updated; push `main` and
+  delete `origin/phenix` and `origin/czi1` once SSH keys are available.
 
 ## Architecture
 
