@@ -154,7 +154,11 @@ analysis = { features = ["analysis"], solve-group = "default" }
 
 [tool.pixi.tasks]
 
+[tool.pixi.feature.testing.dependencies]
+pre-commit = ">=3,<5"
+
 [tool.pixi.feature.testing.tasks]
+lint = "pre-commit run --all-files"
 # Unit tests — no data needed
 test-unit = "pytest src/napari_plate_navigator/_tests/test_loaders_unit.py -v"
 # Integration tests — set TEST_DATA_XXX env vars or use --xxx-dir args (see conftest.py)

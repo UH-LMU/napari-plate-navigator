@@ -18,16 +18,17 @@ import pytest
 
 try:
     import xarray as xr
+
     _has_xarray = True
 except ImportError:
     _has_xarray = False
 
 from napari_plate_navigator._reader import load_plate
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _skip_if_none(path, label):
     if path is None:
@@ -36,11 +37,9 @@ def _skip_if_none(path, label):
 
 def _is_array_like(arr) -> bool:
     """True for dask arrays and xarray DataArrays (which wrap dask arrays)."""
-    if isinstance(arr, da.Array):
-        return True
-    if _has_xarray and isinstance(arr, xr.DataArray):
-        return True
-    return False
+    return isinstance(arr, da.Array) or (
+        _has_xarray and isinstance(arr, xr.DataArray)
+    )
 
 
 def _assert_valid_plate(result):
@@ -64,6 +63,7 @@ def _assert_valid_plate(result):
 # ---------------------------------------------------------------------------
 # ImageXpress
 # ---------------------------------------------------------------------------
+
 
 class TestImageXpressIntegration:
     def test_load_plate(self, imagexpress_dir):
@@ -91,6 +91,7 @@ class TestImageXpressIntegration:
 # Phenix
 # ---------------------------------------------------------------------------
 
+
 class TestPhenixIntegration:
     def test_load_plate(self, phenix_dir):
         _skip_if_none(phenix_dir, "phenix")
@@ -101,9 +102,9 @@ class TestPhenixIntegration:
         _skip_if_none(phenix_dir, "phenix")
         result = load_plate(phenix_dir)
         for well_name in result["plate"].wells:
-            assert well_name.startswith("r"), (
-                f"Unexpected well name format: {well_name}"
-            )
+            assert well_name.startswith(
+                "r"
+            ), f"Unexpected well name format: {well_name}"
 
     def test_load_labels(self, phenix_dir, phenix_labels_dir):
         _skip_if_none(phenix_dir, "phenix images")
@@ -122,6 +123,7 @@ class TestPhenixIntegration:
 # CZI (Zeiss CellDiscoverer 7)
 # ---------------------------------------------------------------------------
 
+
 class TestCziIntegration:
     def test_load_plate(self, czi_dir):
         _skip_if_none(czi_dir, "czi")
@@ -132,14 +134,15 @@ class TestCziIntegration:
         _skip_if_none(czi_dir, "czi")
         result = load_plate(czi_dir)
         for well_name in result["plate"].wells:
-            assert well_name.startswith("row"), (
-                f"Unexpected well name format: {well_name}"
-            )
+            assert well_name.startswith(
+                "row"
+            ), f"Unexpected well name format: {well_name}"
 
 
 # ---------------------------------------------------------------------------
 # SiteTiff
 # ---------------------------------------------------------------------------
+
 
 class TestSiteTiffIntegration:
     def test_load_plate(self, sitetiff_dir):

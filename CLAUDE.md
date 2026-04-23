@@ -37,8 +37,8 @@ Note: CZI test takes ~2 minutes (CZI metadata parsing is inherently slow).
 
 ## Git workflow
 
-- Always use `--no-verify` on `git commit` (pre-commit hooks are from the napari template
-  and not enforced here)
+- Pre-commit hooks are active (ruff, black, end-of-file-fixer, napari-plugin-checks). Run
+  `pixi run --environment testing lint` before committing. Do NOT use `--no-verify`.
 - Active branches: `main` (canonical) and `phenix` (kept in sync with main)
 - Remote branches `origin/czi1`, `origin/phenix`, `origin/main` exist; push when keys available
 

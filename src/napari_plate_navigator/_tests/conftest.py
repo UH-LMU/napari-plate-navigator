@@ -36,10 +36,10 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # CLI option
 # ---------------------------------------------------------------------------
+
 
 def pytest_addoption(parser):
     parser.addoption(
@@ -59,6 +59,7 @@ def pytest_addoption(parser):
 # ---------------------------------------------------------------------------
 # Data root fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def data_dir(request, tmp_path_factory):
@@ -108,8 +109,10 @@ def _download_test_data(base_url: str, cache_dir: Path) -> Path:
     try:
         with urllib.request.urlopen(manifest_url) as resp:
             paths = resp.read().decode().splitlines()
-    except Exception as exc:
-        pytest.fail(f"Could not fetch test data manifest from {manifest_url}: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(
+            f"Could not fetch test data manifest from {manifest_url}: {exc}"
+        )
 
     for rel_path in paths:
         rel_path = rel_path.strip()
@@ -127,6 +130,7 @@ def _download_test_data(base_url: str, cache_dir: Path) -> Path:
 # Skip helper
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def requires_data(data_dir):
     """Fixture that skips the test if no test data is available."""
@@ -141,6 +145,7 @@ def requires_data(data_dir):
 # ---------------------------------------------------------------------------
 # Format-specific data fixtures (all skip gracefully if subdir is missing)
 # ---------------------------------------------------------------------------
+
 
 def _subdir(data_dir, name):
     if data_dir is None:
@@ -163,7 +168,11 @@ def _resolve_format_dir(request, cli_option, env_var, data_dir, subdir_name):
 @pytest.fixture(scope="session")
 def imagexpress_dir(request, data_dir):
     return _resolve_format_dir(
-        request, "--imagexpress-dir", "TEST_DATA_IMAGEXPRESS", data_dir, "imagexpress"
+        request,
+        "--imagexpress-dir",
+        "TEST_DATA_IMAGEXPRESS",
+        data_dir,
+        "imagexpress",
     )
 
 
@@ -177,7 +186,11 @@ def phenix_dir(request, data_dir):
 @pytest.fixture(scope="session")
 def phenix_labels_dir(request, data_dir):
     return _resolve_format_dir(
-        request, "--phenix-labels-dir", "TEST_DATA_PHENIX_LABELS", data_dir, "phenix_labels"
+        request,
+        "--phenix-labels-dir",
+        "TEST_DATA_PHENIX_LABELS",
+        data_dir,
+        "phenix_labels",
     )
 
 
@@ -198,13 +211,18 @@ def sitetiff_dir(request, data_dir):
 @pytest.fixture(scope="session")
 def sitetiff_labels_dir(request, data_dir):
     return _resolve_format_dir(
-        request, "--sitetiff-labels-dir", "TEST_DATA_SITETIFF_LABELS", data_dir, "sitetiff_labels"
+        request,
+        "--sitetiff-labels-dir",
+        "TEST_DATA_SITETIFF_LABELS",
+        data_dir,
+        "sitetiff_labels",
     )
 
 
 # ---------------------------------------------------------------------------
 # Synthetic file fixtures for unit tests (no real image content needed)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def ix_files(tmp_path):

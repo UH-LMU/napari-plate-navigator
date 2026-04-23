@@ -7,9 +7,8 @@ filename parsing and format detection logic.
 """
 
 import pandas as pd
-import pytest
-from pathlib import Path
 
+from napari_plate_navigator._base import Plate
 from napari_plate_navigator._reader import (
     CHANNEL,
     PLATE,
@@ -24,12 +23,11 @@ from napari_plate_navigator._reader import (
     SiteTiffLoader,
     build_plate_from_df_fast,
 )
-from napari_plate_navigator._base import Plate, StateManager
-
 
 # ---------------------------------------------------------------------------
 # ImageXpressLoader
 # ---------------------------------------------------------------------------
+
 
 class TestImageXpressLoader:
     def test_can_read_valid(self, ix_files):
@@ -85,6 +83,7 @@ class TestImageXpressLoader:
 # PhenixLoader
 # ---------------------------------------------------------------------------
 
+
 class TestPhenixLoader:
     def test_can_read_valid(self, phenix_files):
         loader = PhenixLoader()
@@ -131,6 +130,7 @@ class TestPhenixLoader:
 # SiteTiffLoader
 # ---------------------------------------------------------------------------
 
+
 class TestSiteTiffLoader:
     def test_can_read_valid(self, sitetiff_files):
         loader = SiteTiffLoader()
@@ -168,6 +168,7 @@ class TestSiteTiffLoader:
 # SiteTiffLabelLoader
 # ---------------------------------------------------------------------------
 
+
 class TestSiteTiffLabelLoader:
     def test_can_read_valid(self, sitetiff_files):
         # Inherits can_read from SiteTiffLoader
@@ -178,6 +179,7 @@ class TestSiteTiffLabelLoader:
 # ---------------------------------------------------------------------------
 # CziLoader
 # ---------------------------------------------------------------------------
+
 
 class TestCziLoader:
     def test_can_read_valid(self, czi_file):
@@ -199,6 +201,7 @@ class TestCziLoader:
 # build_plate_from_df_fast
 # ---------------------------------------------------------------------------
 
+
 class TestBuildPlate:
     def _make_df(self):
         return pd.DataFrame(
@@ -214,29 +217,33 @@ class TestBuildPlate:
         )
 
     def test_builds_wells(self):
-        state = StateManager.get_instance()
         plate = Plate()
-        build_plate_from_df_fast(self._make_df(), plate, iol="image", name="img")
+        build_plate_from_df_fast(
+            self._make_df(), plate, iol="image", name="img"
+        )
         assert set(plate.wells.keys()) == {"A01"}
 
     def test_builds_sites(self):
-        state = StateManager.get_instance()
         plate = Plate()
-        build_plate_from_df_fast(self._make_df(), plate, iol="image", name="img")
+        build_plate_from_df_fast(
+            self._make_df(), plate, iol="image", name="img"
+        )
         well = plate.get_well("A01")
         assert set(well.sites.keys()) == {"1", "2"}
 
     def test_stores_filelist(self):
-        state = StateManager.get_instance()
         plate = Plate()
-        build_plate_from_df_fast(self._make_df(), plate, iol="image", name="img")
+        build_plate_from_df_fast(
+            self._make_df(), plate, iol="image", name="img"
+        )
         site = plate.get_well_site("A01", "1")
         assert "img" in site.filelists_img
         assert len(site.filelists_img["img"]) == 1
 
     def test_label_iol(self):
-        state = StateManager.get_instance()
         plate = Plate()
-        build_plate_from_df_fast(self._make_df(), plate, iol="label", name="nuclei")
+        build_plate_from_df_fast(
+            self._make_df(), plate, iol="label", name="nuclei"
+        )
         site = plate.get_well_site("A01", "1")
         assert "nuclei" in site.filelists_lbl
