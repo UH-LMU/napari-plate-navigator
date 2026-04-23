@@ -62,12 +62,13 @@ Arrays are built on demand in `Site.build_on_demand()` via the loader stored in 
 |--------|--------|-----------|
 | `CziLoader` | Zeiss CZI | `.czi` suffix |
 | `ImageXpressLoader` | Molecular Devices IXM | regex: `t\d+_\w\d{2}_s\d+_w\d_z\d+` in path |
-| `SiteTiffLabelLoader` | One TIFF per site (labels) | regex: `well_.*_site_\d\d\d.*tif` |
-| `SiteTiffLoader` | One TIFF per site (images) | regex: `well_.*_site_\d\d\d.*tif` |
+| `SiteTiffLoader` | One TIFF per site | regex: `well_.*_site_\d\d\d.*tif` |
+| `SiteTiffLabelLoader` | One TIFF per site (labels) | same regex — never reached by auto-detect |
 | `PhenixLoader` | Opera Phenix | regex: `r\d\dc\d\df\d\dp\d\d-ch\d` in filename |
 
 `load_plate(directory, iol="image"|"label", name=...)` is the main entry point.
-It globs recursively for `.czi`, `.png`, `.tif`, `.tiff`.
+It globs recursively for `.czi`, `.png`, `.tif`, `.tiff`. When `iol="label"` and the
+detected loader is `SiteTiffLoader`, it is automatically swapped to `SiteTiffLabelLoader`.
 
 Key `StateManager` fields: `plate`, `df_images`, `loader_img`, `loader_lbl`, `czi` (BioImage for CZI).
 
@@ -89,8 +90,6 @@ Key `StateManager` fields: `plate`, `df_images`, `loader_img`, `loader_lbl`, `cz
   have the right shape for Napari
 - Default paths in `_widget.py` are hardcoded for Harri's machines (TESTING=True block)
 - `StateManager` is a singleton — call `state.clear_state()` before loading new images
-- `load_plate` uses `os.walk`; avoid loop variables named `name` as they shadow the
-  `name` function parameter (was a bug, fixed in 43742a8)
 
 ## Test data locations (local, not in git)
 
@@ -114,3 +113,4 @@ The conftest supports `TEST_DATA_URL` for HTTP download via a manifest file.
 - [ ] Push branches and delete remote `origin/czi1` once SSH keys are available
 - [ ] Decide whether `SiteTiffLoader` label display bug ("labels still show messed up") is fixed
 - [ ] Host test data on Allas CSC for CI (manifest-based HTTP download via `TEST_DATA_URL`)
+- [ ] Merge `phenix` branch into `main` once all remaining items above are resolved
