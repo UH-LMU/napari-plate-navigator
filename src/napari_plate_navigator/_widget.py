@@ -1,7 +1,6 @@
 # src/napari_plate_navigator/_widget.py
 import logging
 import os
-import pandas as pd
 from pathlib import Path
 
 import napari  # Import for proper Viewer annotation
@@ -37,7 +36,7 @@ if TESTING:
     # Nextflow testing
     default_image_path = Path(f"/DISKS/2TB/{user}/data/connexin/nextflow_pub")
     default_label_path = Path(f"/DISKS/2TB/{user}/data/connexin/nextflow_pub")
-    
+
 else:
     default_image_path = get_mount_path() / "instruments/Micro" / "project1"
     default_label_path = get_mount_path() / "airflow/micro" / "project1"
@@ -75,7 +74,7 @@ class NavigationWidget(QWidget):
         if self.wells:  # Auto-select first well and update sites
             self.well_combo.setCurrentIndex(0)
             self.update_sites_for_well(self.wells[0])  # Trigger initial sites
-            
+
     def update_sites_for_well(self, well_name: str):
         """Filter sites for selected well from state.df_images (or well_df)."""
         if well_name not in self.wells:
@@ -92,7 +91,7 @@ class NavigationWidget(QWidget):
             self.site_combo.setCurrentIndex(0)
             self.site_combo.blockSignals(False)
             # Trigger image update
-            #self.update_image()
+            # self.update_image()
         else:
             self.site_combo.addItem("No sites")  # Placeholder
 
@@ -125,19 +124,20 @@ class NavigationWidget(QWidget):
 
             # Add images, then restore visibility
             for _img_name, img in site_obj.get_images().items():
-                dims_tuple = ('T','Z','C','Y','X')
+                dims_tuple = ("T", "Z", "C", "Y", "X")
                 if hasattr(img, "dims"):
                     dims_tuple = img.dims
 
                 # Find 'C' position (e.g., 2 in ('I', 'T', 'C', 'Z', 'Y', 'X'))
                 try:
-                    channel_pos = dims_tuple.index('C')
+                    channel_pos = dims_tuple.index("C")
                     # Channel axis for Napari (from end: - (len - pos))
-                    channel_axis = - (len(dims_tuple) - channel_pos)
+                    channel_axis = -(len(dims_tuple) - channel_pos)
                 except ValueError:
                     channel_axis = -3  # Fallback for standard TZYXC
-                    logger.warning("No 'C' in dims %s; using default -3",
-                                   str(dims_tuple))
+                    logger.warning(
+                        "No 'C' in dims %s; using default -3", str(dims_tuple)
+                    )
 
                 # Generate generic channel names based on number of channels
                 if hasattr(img, "dims"):
@@ -241,9 +241,7 @@ def make_qwidget() -> NavigationWidget:
     def select_folder_images(folder: Path):
         print("select_folder_images: clear_state")
 
-        _result = load_plate(
-            folder, file_type="tif"
-        )  # Or 'tif' for ImageXpress
+        _result = load_plate(folder)
 
         print("*****")
         print("*****")
@@ -275,7 +273,6 @@ def make_qwidget() -> NavigationWidget:
 
     @magicgui(
         label_name={"label": "Label Name (e.g., nuclei)"},
-        file_type={"label": "File Type", "value": "tif"},
         folder={
             "label": "Select Folder (labels)",
             "mode": "d",
@@ -284,18 +281,13 @@ def make_qwidget() -> NavigationWidget:
         call_button="Load Labels",
     )
     @log_method
-    def select_folder_labels(label_name: str, file_type: str, folder: Path):
-        # state = StateManager.get_instance()  # Singleton access
+    def select_folder_labels(label_name: str, folder: Path):
         logger.debug("label_name %s path %s", label_name, str(folder))
         if not folder or not folder.exists():
             logger.error("Invalid folder")
             return
 
-        _result = load_plate(
-            folder, file_type="tif", iol="label", name=label_name
-        )  # Or 'tif' for ImageXpress
-        # Handle missing labels if needed (using the nonlocal df_images)
-        # df_labels = handle_missing_labels(df_images, df_labels, file_type)  # Uncomment when implemented
+        _result = load_plate(folder, iol="label", name=label_name)
 
         # Refresh the current view after loading new labels
         QTimer.singleShot(0, navigate_widget.update_image)
