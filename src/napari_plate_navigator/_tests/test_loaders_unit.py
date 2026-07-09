@@ -22,6 +22,7 @@ from napari_plate_navigator._reader import (
     SiteTiffLabelLoader,
     SiteTiffLoader,
     build_plate_from_df_fast,
+    load_plate,
 )
 
 # ---------------------------------------------------------------------------
@@ -124,6 +125,41 @@ class TestPhenixLoader:
             by=[PLATE, WELL, SITE, TSTEP, ZSTEP, CHANNEL]
         ).reset_index(drop=True)
         pd.testing.assert_frame_equal(df.reset_index(drop=True), sorted_df)
+
+
+# ---------------------------------------------------------------------------
+# load_plate: label folders with multiple channels (e.g. post_seg.py's
+# ch2/ch3 connexin labels sharing one folder)
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPlateMultiChannelLabels:
+    def test_splits_labels_by_channel(self, phenix_files):
+        directory = phenix_files[0].parent
+        # r01c01f01 has both ch1 and ch2 in the phenix_files fixture.
+        load_plate(directory)  # iol="image" — establishes state.plate
+        result = load_plate(directory, iol="label", name="connexins")
+
+        site = result["plate"].get_well_site("r01c01", 1)
+        assert "connexins_ch1" in site.filelists_lbl
+        assert "connexins_ch2" in site.filelists_lbl
+        assert "connexins" not in site.filelists_lbl
+
+    def test_single_channel_label_folder_unsuffixed(self, tmp_path):
+        meas = tmp_path / "measurement1"
+        meas.mkdir()
+        for name in [
+            "r01c01f01p01-ch1sk1fk1fl1.tif",
+            "r01c01f02p01-ch1sk1fk1fl1.tif",
+        ]:
+            (meas / name).touch()
+
+        load_plate(meas)  # iol="image"
+        result = load_plate(meas, iol="label", name="cellpose")
+
+        site = result["plate"].get_well_site("r01c01", 1)
+        assert "cellpose" in site.filelists_lbl
+        assert "cellpose_ch1" not in site.filelists_lbl
 
 
 # ---------------------------------------------------------------------------

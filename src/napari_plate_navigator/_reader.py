@@ -521,7 +521,29 @@ def load_plate(
     logger.debug("name %s", name)
 
     plate = StateManager.get_instance().plate
-    build_plate_from_df_fast(df, plate, iol=iol, name=name)
+
+    if iol == "label":
+        # A single label folder can hold more than one kind of label sharing
+        # the same site-naming convention, distinguished only by CHANNEL —
+        # e.g. post_seg.py's ch2/ch3 connexin label images
+        # (rNNcNNfNNpNN-ch2..._rf.tiff / ...-ch3..._rf.tiff). Loading them as
+        # one array would silently stack two unrelated segmentations onto a
+        # channel axis, so split by channel and register each as its own
+        # named label layer instead. A folder with only one channel behaves
+        # exactly as before (no suffix).
+        channels = sorted(df[CHANNEL].unique())
+        if len(channels) > 1:
+            for channel in channels:
+                build_plate_from_df_fast(
+                    df[df[CHANNEL] == channel],
+                    plate,
+                    iol=iol,
+                    name=f"{name}_ch{channel}",
+                )
+        else:
+            build_plate_from_df_fast(df, plate, iol=iol, name=name)
+    else:
+        build_plate_from_df_fast(df, plate, iol=iol, name=name)
 
     return {"df": df, "plate": plate}
 

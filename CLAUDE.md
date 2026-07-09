@@ -70,6 +70,12 @@ Arrays are built on demand in `Site.build_on_demand()` via the loader stored in 
 `load_plate(directory, iol="image"|"label", name=...)` is the main entry point.
 It globs recursively for `.czi`, `.png`, `.tif`, `.tiff`. When `iol="label"` and the
 detected loader is `SiteTiffLoader`, it is automatically swapped to `SiteTiffLabelLoader`.
+When `iol="label"` and the discovered metadata spans more than one distinct
+`CHANNEL` value (e.g. a folder holding post_seg.py's ch2 *and* ch3 connexin
+label images from the connexin pipeline, distinguished only by the `-chN`
+token in the filename), `load_plate` registers each channel as its own named
+label layer (`{name}_ch{N}`) instead of stacking them into one array — a
+single-channel label folder is unaffected (no suffix, same as before).
 
 Key `StateManager` fields: `plate`, `df_images`, `loader_img`, `loader_lbl`, `czi` (BioImage for CZI).
 
@@ -110,6 +116,11 @@ The conftest supports `TEST_DATA_URL` for HTTP download via a manifest file.
 - [ ] Test Phenix label loading (cellpose masks may now be ready in `07-cellpose/`)
 - [ ] Test CZI file 2: `/DISKS/1TB/hajaalin/data/parijat/2/`
 - [ ] Prepare SiteTiff test data and run `test-sitetiff`
+- [ ] Persist channel colormap across site switches — `StateManager` saves
+  `channel_vis` and `channel_contrast` but not colormap, so manual color picks
+  are lost when navigating. Add `channel_colormap` dict + getter/setter in
+  `_base.py` and restore/connect it in `_widget.py:update_image` next to the
+  existing `contrast_limits` handling.
 - [ ] Clean up repo root: `.gitignore` conda env files, scratch notebooks, backup files
 - [ ] Push branches and delete remote `origin/czi1` once SSH keys are available
 - [ ] Decide whether `SiteTiffLoader` label display bug ("labels still show messed up") is fixed
