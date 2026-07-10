@@ -167,6 +167,8 @@ test-ix       = "pytest src/napari_plate_navigator/_tests/test_integration.py::T
 test-phenix   = "pytest src/napari_plate_navigator/_tests/test_integration.py::TestPhenixIntegration -v"
 test-czi      = "pytest src/napari_plate_navigator/_tests/test_integration.py::TestCziIntegration -v"
 test-sitetiff = "pytest src/napari_plate_navigator/_tests/test_integration.py::TestSiteTiffIntegration -v"
+# Widget-level tests — drive NavigationWidget across site switches
+test-widget   = "pytest src/napari_plate_navigator/_tests/test_widget.py -v"
 # All tests
 test = "pytest src/napari_plate_navigator/_tests/ -v"
 
